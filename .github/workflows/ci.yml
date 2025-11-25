@@ -1,0 +1,111 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup GraalVM
+        uses: graalvm/setup-graalvm@v1
+        with:
+          distribution: 'graalvm'
+          java-version: '21'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          cache: 'gradle'
+
+      - name: Make gradlew executable
+        run: chmod +x ./gradlew
+
+      - name: Run tests
+        run: ./gradlew test --no-daemon --stacktrace
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: build/test-results/test/
+          retention-days: 30
+
+  build:
+    name: Build JVM Application
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup GraalVM
+        uses: graalvm/setup-graalvm@v1
+        with:
+          distribution: 'graalvm'
+          java-version: '21'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          cache: 'gradle'
+
+      - name: Make gradlew executable
+        run: chmod +x ./gradlew
+
+      - name: Build JVM application
+        run: ./gradlew build --no-daemon --stacktrace
+
+      - name: Upload JVM JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: google-drive-downloader-jvm-jar
+          path: build/libs/*.jar
+          retention-days: 90
+#
+#  This workflow commented out for now, due to high usage of free-tier Github Actions usage.
+#  native-image:
+#    name: Build Native Image
+#    needs: build
+#    runs-on: ubuntu-latest
+#    timeout-minutes: 30
+#    # Only run on pushes to main branch (not on PRs)
+#    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+#
+#    steps:
+#      - name: Checkout code
+#        uses: actions/checkout@v4
+#
+#      - name: Setup GraalVM
+#        uses: graalvm/setup-graalvm@v1
+#        with:
+#          distribution: 'graalvm'
+#          java-version: '21'
+#          github-token: ${{ secrets.GITHUB_TOKEN }}
+#          cache: 'gradle'
+#          native-image-job-reports: true
+#
+#      - name: Make gradlew executable
+#        run: chmod +x ./gradlew
+#
+#      - name: Build native image
+#        run: ./gradlew nativeCompile --no-daemon --stacktrace
+#
+#      - name: Verify native binary
+#        run: |
+#          ls -lh build/native/nativeCompile/google-drive-downloader
+#          file build/native/nativeCompile/google-drive-downloader
+#
+#      - name: Upload native binary
+#        uses: actions/upload-artifact@v4
+#        with:
+#          name: google-drive-downloader-linux-x64
+#          path: build/native/nativeCompile/google-drive-downloader
+#          retention-days: 90
