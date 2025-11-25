@@ -124,8 +124,11 @@ interface GoogleDriveClient {
     fun isAuthenticated(): Boolean
 
     /**
-     * Get the initial page token for change detection.
-     * @return Result containing the start page token or error
+     * Get a page token representing the current state of Google Drive ("right now").
+     * This calls the Google Drive API to fetch a fresh token - it does NOT read from local storage.
+     * Use this to initialize change tracking on first sync. The returned token should be stored
+     * locally by the Sync Engine for use in subsequent incremental syncs.
+     * @return Result containing the current start page token from the API, or error
      */
     suspend fun getStartPageToken(): Result<String>
 
