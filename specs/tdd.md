@@ -1,8 +1,8 @@
 # GDrive Sync — Technical Design Document
 
-**Project:** Google Drive Incremental Backup Utility  
-**Language:** Kotlin/Native  
-**Target Platform:** Ubuntu Linux (native binary)  
+**Project:** Google Drive Incremental Backup Utility
+**Language:** Kotlin (JVM) with GraalVM Native Image
+**Target Platform:** Ubuntu Linux (native binary)
 **Version:** 1.0 Draft
 
 ---
@@ -30,7 +30,7 @@ GDrive Sync is a command-line utility that incrementally downloads all files fro
 
 | ID | Requirement |
 |----|-------------|
-| NFR-1 | Compile to native binary using Kotlin/Native (no JVM dependency) |
+| NFR-1 | Compile to native binary using GraalVM Native Image (no JVM runtime dependency) |
 | NFR-2 | Run on Ubuntu Linux (x86_64) |
 | NFR-3 | Handle large Drive accounts (100,000+ files) |
 | NFR-4 | Provide progress feedback during sync operations |
@@ -97,7 +97,7 @@ GDrive Sync is a command-line utility that incrementally downloads all files fro
 
 ### 4.1 Local State Database
 
-The application maintains a SQLite database to track sync state. SQLite is chosen for its single-file simplicity, ACID compliance, and native compatibility through Kotlin/Native bindings.
+The application maintains a SQLite database to track sync state. SQLite is chosen for its single-file simplicity, ACID compliance, and native compatibility through sqlite-jdbc with automatic GraalVM JNI configuration.
 
 **Location:** `~/.gdrive-sync/state.db`
 
@@ -402,67 +402,158 @@ The application is designed for crash recovery through:
 
 ---
 
-## 9. Kotlin/Native Considerations
+## 9. GraalVM Native Image Considerations
 
 ### 9.1 Platform Libraries
 
-Since Kotlin/Native doesn't have access to JVM libraries, the following native alternatives are required:
+GraalVM Native Image provides access to the mature JVM ecosystem while still producing native binaries. The following libraries are used:
 
 | Capability | Library/Approach |
 |------------|------------------|
-| HTTP Client | `libcurl` via cinterop bindings |
-| JSON Parsing | `kotlinx.serialization` (multiplatform) |
-| SQLite | `sqlite3` via cinterop bindings |
-| File I/O | POSIX APIs via `platform.posix` |
-| OAuth/Crypto | `libsodium` or OpenSSL for PKCE |
+| HTTP Client | OkHttp 4.12.0 (official GraalVM support) |
+| Google Drive API | google-api-client 2.7.0 + google-api-services-drive (with native-image metadata) |
+| JSON Parsing | kotlinx.serialization 1.7.3 (reflection-free) |
+| SQLite | sqlite-jdbc 3.47.0.0 (automatic JNI configuration) |
+| File I/O | Java NIO (Files, Paths) |
+| OAuth 2.0 | google-oauth-client-jetty 1.36.0 |
+| CLI Parsing | Picocli 4.7.6 (excellent GraalVM support) |
 
 ### 9.2 Build Configuration
 
 ```kotlin
 // build.gradle.kts
 plugins {
-    kotlin("multiplatform") version "1.9.22"
-    kotlin("plugin.serialization") version "1.9.22"
+    kotlin("jvm") version "2.2.20"
+    kotlin("plugin.serialization") version "2.2.20"
+    id("org.graalvm.buildtools.native") version "0.11.1"
+    application
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    // HTTP & Google APIs
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("com.google.api-client:google-api-client:2.7.0")
+    implementation("com.google.apis:google-api-services-drive:v3-rev20240914-2.0.0")
+    implementation("com.google.oauth-client:google-oauth-client-jetty:1.36.0")
+    implementation("com.google.cloud:native-image-support:0.21.0")
+
+    // Database & serialization
+    implementation("org.xerial:sqlite-jdbc:3.47.0.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+
+    // CLI & utilities
+    implementation("info.picocli:picocli:4.7.6")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
+    implementation("io.github.oshai:kotlin-logging-jvm:7.0.0")
+    implementation("org.slf4j:slf4j-simple:2.0.16")
+
+    testImplementation(kotlin("test"))
+    testImplementation("io.mockk:mockk:1.13.13")
+}
+
+application {
+    mainClass.set("dev.dking.gdrivesync.MainKt")
+}
+
+graalvmNative {
+    binaries {
+        named("main") {
+            imageName.set("gdrive-sync")
+            mainClass.set("dev.dking.gdrivesync.MainKt")
+
+            buildArgs.addAll(listOf(
+                "--enable-http",
+                "--enable-https",
+                "--enable-url-protocols=http,https",
+                "--enable-all-security-services",
+                "-O3",
+                "--no-fallback",
+                "-H:+ReportExceptionStackTraces",
+                "--initialize-at-build-time=com.google.api.client",
+                "--initialize-at-run-time=com.google.api.client.http.javanet.NetHttpTransport",
+                "--gc=serial"
+            ))
+
+            verbose.set(true)
+        }
+    }
+
+    // GraalVM agent for automatic metadata generation
+    agent {
+        defaultMode.set("standard")
+        metadataCopy {
+            inputTaskNames.add("test")
+            outputDirectories.add("src/main/resources/META-INF/native-image")
+            mergeWithExisting.set(true)
+        }
+    }
+
+    binaries.all {
+        resources.autodetect()
+    }
 }
 
 kotlin {
-    linuxX64("native") {
-        binaries {
-            executable {
-                entryPoint = "com.example.gdrivesync.main"
-            }
-        }
-        compilations["main"].cinterops {
-            val libcurl by creating
-            val sqlite3 by creating
-        }
-    }
-    
-    sourceSets {
-        val nativeMain by getting {
-            dependencies {
-                implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.2")
-                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
-                implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.5.0")
-            }
-        }
-    }
+    jvmToolchain(21)
 }
 ```
 
-### 9.3 Cinterop Definitions
+### 9.3 Native Image Metadata
 
-**libcurl.def:**
-```
-headers = curl/curl.h
-linkerOpts.linux = -lcurl
+GraalVM Native Image requires metadata for reflection, JNI, and resources. This is handled through:
+
+**Automatic Metadata:**
+- Google's native-image-support library provides pre-configured metadata for Google APIs
+- sqlite-jdbc 3.40.1.0+ includes automatic JNI configuration
+- Picocli annotations are automatically processed
+
+**GraalVM Agent:**
+During development, run with the agent to capture dynamic behavior:
+```bash
+./gradlew -Pagent run --args="auth"
+./gradlew -Pagent run --args="sync --full"
+./gradlew -Pagent test
 ```
 
-**sqlite3.def:**
+**Metadata Location:**
+- `src/main/resources/META-INF/native-image/reflect-config.json`
+- `src/main/resources/META-INF/native-image/resource-config.json`
+- `src/main/resources/META-INF/native-image/jni-config.json`
+- `src/main/resources/META-INF/native-image/proxy-config.json`
+
+### 9.4 Development Workflow
+
+**Fast Iteration (JVM Mode):**
+```bash
+./gradlew run --args="sync"
 ```
-headers = sqlite3.h
-linkerOpts.linux = -lsqlite3
+
+**Native Binary Compilation:**
+```bash
+./gradlew nativeCompile
+./build/native/nativeCompile/gdrive-sync --version
 ```
+
+**Native Tests:**
+```bash
+./gradlew nativeTest
+```
+
+**Benefits:**
+- Development uses standard JVM for fast iteration
+- Official Google Drive API client with comprehensive documentation
+- No C interop complexity
+- Better IDE support and debugging
+- Automatic dependency updates via Gradle
+
+**Trade-offs:**
+- Binary size: 40-80MB (vs 5-10MB with Kotlin/Native)
+- Build time: 2-5 minutes (vs 30 seconds)
+- Requires GraalVM for builds (standard toolchain)
 
 ---
 
@@ -578,39 +669,54 @@ gdrive-sync/
 ├── settings.gradle.kts
 ├── gradle.properties
 ├── src/
-│   └── nativeMain/
-│       ├── kotlin/
-│       │   └── com/example/gdrivesync/
-│       │       ├── Main.kt
-│       │       ├── cli/
-│       │       │   ├── CommandParser.kt
-│       │       │   └── ProgressReporter.kt
-│       │       ├── config/
-│       │       │   └── ConfigManager.kt
-│       │       ├── api/
-│       │       │   ├── DriveClient.kt
-│       │       │   ├── OAuthHandler.kt
-│       │       │   └── HttpClient.kt
-│       │       ├── sync/
-│       │       │   ├── SyncEngine.kt
-│       │       │   ├── ChangeDetector.kt
-│       │       │   └── DownloadManager.kt
-│       │       ├── state/
-│       │       │   ├── StateManager.kt
-│       │       │   └── Database.kt
-│       │       ├── export/
-│       │       │   └── ExportHandler.kt
-│       │       └── util/
-│       │           ├── FileUtils.kt
-│       │           └── Sanitizer.kt
-│       └── cinterop/
-│           ├── libcurl.def
-│           └── sqlite3.def
-└── src/
-    └── nativeTest/
-        └── kotlin/
-            └── com/example/gdrivesync/
-                └── ... (test files)
+│   ├── main/
+│   │   ├── kotlin/
+│   │   │   └── dev/dking/gdrivesync/
+│   │   │       ├── Main.kt
+│   │   │       ├── cli/
+│   │   │       │   ├── GDriveSyncCommand.kt
+│   │   │       │   ├── AuthCommand.kt
+│   │   │       │   ├── SyncCommand.kt
+│   │   │       │   ├── StatusCommand.kt
+│   │   │       │   ├── ResetCommand.kt
+│   │   │       │   └── ProgressReporter.kt
+│   │   │       ├── config/
+│   │   │       │   ├── ConfigManager.kt
+│   │   │       │   └── AppConfig.kt
+│   │   │       ├── api/
+│   │   │       │   ├── DriveClient.kt
+│   │   │       │   ├── OAuthHandler.kt
+│   │   │       │   ├── TokenStorage.kt
+│   │   │       │   ├── RateLimiter.kt
+│   │   │       │   └── RetryPolicy.kt
+│   │   │       ├── sync/
+│   │   │       │   ├── SyncEngine.kt
+│   │   │       │   ├── ChangeDetector.kt
+│   │   │       │   ├── DownloadManager.kt
+│   │   │       │   └── FileDownloader.kt
+│   │   │       ├── state/
+│   │   │       │   ├── StateManager.kt
+│   │   │       │   ├── Database.kt
+│   │   │       │   └── models/
+│   │   │       │       ├── FileRecord.kt
+│   │   │       │       └── SyncRun.kt
+│   │   │       ├── export/
+│   │   │       │   ├── ExportHandler.kt
+│   │   │       │   └── MimeTypeMapper.kt
+│   │   │       └── util/
+│   │   │           ├── FileUtils.kt
+│   │   │           └── FilenameSanitizer.kt
+│   │   └── resources/
+│   │       └── META-INF/
+│   │           └── native-image/
+│   │               ├── reflect-config.json
+│   │               ├── resource-config.json
+│   │               ├── jni-config.json
+│   │               └── proxy-config.json
+│   └── test/
+│       └── kotlin/
+│           └── dev/dking/gdrivesync/
+│               └── ... (test files)
 ```
 
 ---
@@ -619,16 +725,17 @@ gdrive-sync/
 
 | Phase | Milestone | Description |
 |-------|-----------|-------------|
-| 1 | Project Setup | Build configuration, cinterop bindings, basic CLI |
-| 2 | OAuth Implementation | Full OAuth 2.0 + PKCE flow with token persistence |
-| 3 | API Client | Drive API wrapper with rate limiting and retry logic |
-| 4 | State Management | SQLite integration, schema, CRUD operations |
+| 1 | Project Setup | GraalVM plugin configuration, dependencies, basic CLI |
+| 2 | OAuth Implementation | Full OAuth 2.0 + PKCE flow with google-oauth-client |
+| 3 | API Client | Drive API wrapper using official Google client libraries |
+| 4 | State Management | SQLite integration with sqlite-jdbc, schema, CRUD operations |
 | 5 | Initial Sync | Full download with folder hierarchy preservation |
 | 6 | Incremental Sync | Change detection and delta downloads |
 | 7 | Resume Support | Crash recovery and partial download resumption |
 | 8 | Export Handling | Google Workspace file conversion |
 | 9 | Polish | Progress reporting, logging, error messages |
-| 10 | Testing & Release | Comprehensive testing, documentation, packaging |
+| 10 | Native Image Optimization | Metadata collection, binary optimization, testing |
+| 11 | Testing & Release | Comprehensive testing, documentation, packaging |
 
 ---
 
@@ -711,6 +818,8 @@ Potential features for future versions:
 ## Appendix B: References
 
 - [Google Drive API v3 Documentation](https://developers.google.com/drive/api/v3/reference)
-- [Kotlin/Native Documentation](https://kotlinlang.org/docs/native-overview.html)
+- [GraalVM Native Image Documentation](https://www.graalvm.org/latest/reference-manual/native-image/)
+- [GraalVM Native Build Tools (Gradle)](https://graalvm.github.io/native-build-tools/latest/gradle-plugin.html)
+- [Google Cloud Native Image Support](https://github.com/GoogleCloudPlatform/native-image-support-java)
 - [OAuth 2.0 for Mobile & Desktop Apps](https://developers.google.com/identity/protocols/oauth2/native-app)
 - [PKCE RFC 7636](https://tools.ietf.org/html/rfc7636)
