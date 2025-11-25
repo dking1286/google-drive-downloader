@@ -799,26 +799,6 @@ data class AppConfig(
             // Parse JSON configuration file
             // Return Result.success or Result.failure
         }
-
-        /**
-         * Get default configuration.
-         */
-        fun default(): AppConfig = AppConfig(
-            downloadDirectory = System.getProperty("user.home") + "/GoogleDrive",
-            exportFormats = mapOf(
-                "application/vnd.google-apps.document" to
-                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                "application/vnd.google-apps.spreadsheet" to
-                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                "application/vnd.google-apps.presentation" to
-                    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-                "application/vnd.google-apps.drawing" to "image/png"
-            ),
-            maxConcurrentDownloads = 4,
-            retryAttempts = 3,
-            retryDelaySeconds = 5,
-            logLevel = "info"
-        )
     }
 }
 ```
