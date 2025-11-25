@@ -42,8 +42,45 @@ Google Drive Downloader is a command-line utility that incrementally downloads a
 
 ### 3.1 High-Level Architecture
 
-```
-INSERT DIAGRAM HERE
+```mermaid
+graph TB
+    User[User at Keyboard]
+
+    subgraph "Google Drive Downloader Application"
+        CLI[CLI Frontend<br/>Entry Point]
+        SyncEngine[Sync Engine<br/>Orchestration & State Management]
+        DriveClient[Google Drive Client<br/>API Communication]
+    end
+
+    subgraph "External Systems"
+        DriveAPI[Google Drive API<br/>Files & Export APIs]
+        StateDB[(Local State Database<br/>SQLite)]
+        FileSystem[Local Filesystem<br/>Downloaded Files]
+    end
+
+    User -->|Commands| CLI
+    CLI -->|Progress & Status| User
+
+    CLI -->|Submit Commands| SyncEngine
+    SyncEngine -->|State Change Events| CLI
+
+    SyncEngine -->|API Requests| DriveClient
+    DriveClient -->|API Responses| SyncEngine
+
+    DriveClient -->|OAuth 2.0 Flow<br/>Files API Calls<br/>Export API Calls| DriveAPI
+    DriveAPI -->|Access Tokens<br/>File Metadata<br/>File Content| DriveClient
+
+    SyncEngine -->|Persist Sync State<br/>Track File Status<br/>Store Change Tokens| StateDB
+    StateDB -->|Query State<br/>Resume Info| SyncEngine
+
+    SyncEngine -->|Download Files<br/>Create Directories<br/>Write Content| FileSystem
+
+    style CLI fill:#e1f5ff
+    style SyncEngine fill:#fff4e1
+    style DriveClient fill:#f0e1ff
+    style DriveAPI fill:#e8e8e8
+    style StateDB fill:#e8f5e9
+    style FileSystem fill:#e8f5e9
 ```
 
 ### 3.2 Component Descriptions
