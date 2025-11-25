@@ -1,4 +1,4 @@
-# GDrive Sync — Technical Design Document
+# Google Drive Downloader — Technical Design Document
 
 **Project:** Google Drive Incremental Backup Utility
 **Language:** Kotlin (JVM) with GraalVM Native Image
@@ -9,7 +9,7 @@
 
 ## 1. Executive Summary
 
-GDrive Sync is a command-line utility that incrementally downloads all files from a user's Google Drive to their local filesystem. The program compiles to a native Linux binary with no JVM runtime dependency, supports resumable operations, and only downloads files that have changed since the last synchronization.
+Google Drive Downloader is a command-line utility that incrementally downloads all files from a user's Google Drive to their local filesystem. The program compiles to a native Linux binary with no JVM runtime dependency, supports resumable operations, and only downloads files that have changed since the last synchronization.
 
 ---
 
@@ -17,24 +17,24 @@ GDrive Sync is a command-line utility that incrementally downloads all files fro
 
 ### 2.1 Functional Requirements
 
-| ID | Requirement |
-|----|-------------|
-| FR-1 | Download all files from a user's Google Drive to a local directory |
-| FR-2 | Support incremental sync — only download new or modified files |
-| FR-3 | Resume interrupted downloads without re-downloading completed files |
-| FR-4 | Preserve Google Drive folder hierarchy locally |
+| ID   | Requirement                                                              |
+|------|--------------------------------------------------------------------------|
+| FR-1 | Download all files from a user's Google Drive to a local directory       |
+| FR-2 | Support incremental sync — only download new or modified files           |
+| FR-3 | Resume interrupted downloads without re-downloading completed files      |
+| FR-4 | Preserve Google Drive folder hierarchy locally                           |
 | FR-5 | Export Google Workspace files (Docs, Sheets, Slides) to standard formats |
-| FR-6 | Authenticate using OAuth 2.0 via the Google Drive API |
+| FR-6 | Authenticate using OAuth 2.0 via the Google Drive API                    |
 
 ### 2.2 Non-Functional Requirements
 
-| ID | Requirement |
-|----|-------------|
+| ID    | Requirement                                                                     |
+|-------|---------------------------------------------------------------------------------|
 | NFR-1 | Compile to native binary using GraalVM Native Image (no JVM runtime dependency) |
-| NFR-2 | Run on Ubuntu Linux (x86_64) |
-| NFR-3 | Handle large Drive accounts (100,000+ files) |
-| NFR-4 | Provide progress feedback during sync operations |
-| NFR-5 | Log operations for debugging and audit purposes |
+| NFR-2 | Run on Ubuntu Linux (x86_64)                                                    |
+| NFR-3 | Handle large Drive accounts (100,000+ files)                                    |
+| NFR-4 | Provide progress feedback during sync operations                                |
+| NFR-5 | Log operations for debugging and audit purposes                                 |
 
 ---
 
@@ -44,7 +44,7 @@ GDrive Sync is a command-line utility that incrementally downloads all files fro
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        GDrive Sync CLI                          │
+│                   Google Drive Downloader CLI                   │
 ├─────────────────────────────────────────────────────────────────┤
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐  │
 │  │   Command   │  │   Config    │  │      Progress           │  │
@@ -99,7 +99,7 @@ GDrive Sync is a command-line utility that incrementally downloads all files fro
 
 The application maintains a SQLite database to track sync state. SQLite is chosen for its single-file simplicity, ACID compliance, and native compatibility through sqlite-jdbc with automatic GraalVM JNI configuration.
 
-**Location:** `~/.gdrive-sync/state.db`
+**Location:** `~/.google-drive-downloader/state.db`
 
 #### Schema
 
@@ -146,7 +146,7 @@ CREATE INDEX idx_files_status ON files(sync_status);
 
 ### 4.2 Configuration File
 
-**Location:** `~/.gdrive-sync/config.json`
+**Location:** `~/.google-drive-downloader/config.json`
 
 ```json
 {
@@ -166,7 +166,7 @@ CREATE INDEX idx_files_status ON files(sync_status);
 
 ### 4.3 OAuth Token Storage
 
-**Location:** `~/.gdrive-sync/tokens.json` (file permissions: 600)
+**Location:** `~/.google-drive-downloader/tokens.json` (file permissions: 600)
 
 ```json
 {
@@ -184,14 +184,14 @@ CREATE INDEX idx_files_status ON files(sync_status);
 
 ### 5.1 Required API Endpoints
 
-| Endpoint | Purpose |
-|----------|---------|
-| `GET /drive/v3/files` | List files and folders with metadata |
-| `GET /drive/v3/files/{fileId}` | Get specific file metadata |
-| `GET /drive/v3/files/{fileId}?alt=media` | Download file content |
-| `GET /drive/v3/files/{fileId}/export` | Export Google Workspace files |
-| `GET /drive/v3/changes/startPageToken` | Get initial change token |
-| `GET /drive/v3/changes` | List changes since last sync |
+| Endpoint                                 | Purpose                              |
+|------------------------------------------|--------------------------------------|
+| `GET /drive/v3/files`                    | List files and folders with metadata |
+| `GET /drive/v3/files/{fileId}`           | Get specific file metadata           |
+| `GET /drive/v3/files/{fileId}?alt=media` | Download file content                |
+| `GET /drive/v3/files/{fileId}/export`    | Export Google Workspace files        |
+| `GET /drive/v3/changes/startPageToken`   | Get initial change token             |
+| `GET /drive/v3/changes`                  | List changes since last sync         |
 
 ### 5.2 OAuth 2.0 Configuration
 
@@ -211,11 +211,11 @@ CREATE INDEX idx_files_status ON files(sync_status);
 
 Google Drive API has the following default quotas:
 
-| Quota | Limit |
-|-------|-------|
-| Queries per day | 1,000,000,000 |
-| Queries per 100 seconds per user | 1,000 |
-| Queries per 100 seconds | 10,000 |
+| Quota                            | Limit         |
+|----------------------------------|---------------|
+| Queries per day                  | 1,000,000,000 |
+| Queries per 100 seconds per user | 1,000         |
+| Queries per 100 seconds          | 10,000        |
 
 The application implements exponential backoff when receiving `429 Too Many Requests` or `503 Service Unavailable` responses.
 
@@ -341,14 +341,14 @@ Regular files (non-Google Workspace) are downloaded directly using the `alt=medi
 
 Google Workspace files (Docs, Sheets, Slides, etc.) cannot be downloaded directly. They must be exported to a standard format:
 
-| Google MIME Type | Export Format | Extension |
-|------------------|---------------|-----------|
-| `application/vnd.google-apps.document` | DOCX | `.docx` |
-| `application/vnd.google-apps.spreadsheet` | XLSX | `.xlsx` |
-| `application/vnd.google-apps.presentation` | PPTX | `.pptx` |
-| `application/vnd.google-apps.drawing` | PNG | `.png` |
-| `application/vnd.google-apps.form` | (not exportable) | — |
-| `application/vnd.google-apps.site` | (not exportable) | — |
+| Google MIME Type                           | Export Format    | Extension |
+|--------------------------------------------|------------------|-----------|
+| `application/vnd.google-apps.document`     | DOCX             | `.docx`   |
+| `application/vnd.google-apps.spreadsheet`  | XLSX             | `.xlsx`   |
+| `application/vnd.google-apps.presentation` | PPTX             | `.pptx`   |
+| `application/vnd.google-apps.drawing`      | PNG              | `.png`    |
+| `application/vnd.google-apps.form`         | (not exportable) | —         |
+| `application/vnd.google-apps.site`         | (not exportable) | —         |
 
 ### 7.3 Shortcuts and Links
 
@@ -408,15 +408,15 @@ The application is designed for crash recovery through:
 
 GraalVM Native Image provides access to the mature JVM ecosystem while still producing native binaries. The following libraries are used:
 
-| Capability | Library/Approach |
-|------------|------------------|
-| HTTP Client | OkHttp 4.12.0 (official GraalVM support) |
+| Capability       | Library/Approach                                                                 |
+|------------------|----------------------------------------------------------------------------------|
+| HTTP Client      | OkHttp 4.12.0 (official GraalVM support)                                         |
 | Google Drive API | google-api-client 2.7.0 + google-api-services-drive (with native-image metadata) |
-| JSON Parsing | kotlinx.serialization 1.7.3 (reflection-free) |
-| SQLite | sqlite-jdbc 3.47.0.0 (automatic JNI configuration) |
-| File I/O | Java NIO (Files, Paths) |
-| OAuth 2.0 | google-oauth-client-jetty 1.36.0 |
-| CLI Parsing | Picocli 4.7.6 (excellent GraalVM support) |
+| JSON Parsing     | kotlinx.serialization 1.7.3 (reflection-free)                                    |
+| SQLite           | sqlite-jdbc 3.47.0.0 (automatic JNI configuration)                               |
+| File I/O         | Java NIO (Files, Paths)                                                          |
+| OAuth 2.0        | google-oauth-client-jetty 1.36.0                                                 |
+| CLI Parsing      | Picocli 4.7.6 (excellent GraalVM support)                                        |
 
 ### 9.2 Build Configuration
 
@@ -462,7 +462,7 @@ application {
 graalvmNative {
     binaries {
         named("main") {
-            imageName.set("gdrive-sync")
+            imageName.set("google-drive-downloader")
             mainClass.set("dev.dking.gdrivesync.MainKt")
 
             buildArgs.addAll(listOf(
@@ -535,7 +535,7 @@ During development, run with the agent to capture dynamic behavior:
 **Native Binary Compilation:**
 ```bash
 ./gradlew nativeCompile
-./build/native/nativeCompile/gdrive-sync --version
+./build/native/nativeCompile/google-drive-downloader --version
 ```
 
 **Native Tests:**
@@ -562,7 +562,7 @@ During development, run with the agent to capture dynamic behavior:
 ### 10.1 Commands
 
 ```
-gdrive-sync <command> [options]
+google-drive-downloader <command> [options]
 
 Commands:
   auth        Authenticate with Google Drive
@@ -571,7 +571,7 @@ Commands:
   reset       Clear local state and start fresh
 
 Global Options:
-  --config <path>     Path to config file (default: ~/.gdrive-sync/config.json)
+  --config <path>     Path to config file (default: ~/.google-drive-downloader/config.json)
   --verbose, -v       Enable verbose output
   --quiet, -q         Suppress non-error output
   --help, -h          Show help message
@@ -582,7 +582,7 @@ Global Options:
 
 **auth:**
 ```
-gdrive-sync auth [--force]
+google-drive-downloader auth [--force]
 
 Options:
   --force    Re-authenticate even if valid tokens exist
@@ -590,7 +590,7 @@ Options:
 
 **sync:**
 ```
-gdrive-sync sync [options]
+google-drive-downloader sync [options]
 
 Options:
   --full              Force full sync (ignore change tokens)
@@ -602,7 +602,7 @@ Options:
 
 **status:**
 ```
-gdrive-sync status
+google-drive-downloader status
 
 Output:
   Last sync: 2025-05-15 10:30:00
@@ -664,7 +664,7 @@ The OAuth flow uses PKCE (Proof Key for Code Exchange) to prevent authorization 
 ## 13. Project Structure
 
 ```
-gdrive-sync/
+google-drive-downloader/
 ├── build.gradle.kts
 ├── settings.gradle.kts
 ├── gradle.properties
@@ -723,19 +723,19 @@ gdrive-sync/
 
 ## 14. Development Milestones
 
-| Phase | Milestone | Description |
-|-------|-----------|-------------|
-| 1 | Project Setup | GraalVM plugin configuration, dependencies, basic CLI |
-| 2 | OAuth Implementation | Full OAuth 2.0 + PKCE flow with google-oauth-client |
-| 3 | API Client | Drive API wrapper using official Google client libraries |
-| 4 | State Management | SQLite integration with sqlite-jdbc, schema, CRUD operations |
-| 5 | Initial Sync | Full download with folder hierarchy preservation |
-| 6 | Incremental Sync | Change detection and delta downloads |
-| 7 | Resume Support | Crash recovery and partial download resumption |
-| 8 | Export Handling | Google Workspace file conversion |
-| 9 | Polish | Progress reporting, logging, error messages |
-| 10 | Native Image Optimization | Metadata collection, binary optimization, testing |
-| 11 | Testing & Release | Comprehensive testing, documentation, packaging |
+| Phase | Milestone                 | Description                                                  |
+|-------|---------------------------|--------------------------------------------------------------|
+| 1     | Project Setup             | GraalVM plugin configuration, dependencies, basic CLI        |
+| 2     | OAuth Implementation      | Full OAuth 2.0 + PKCE flow with google-oauth-client          |
+| 3     | API Client                | Drive API wrapper using official Google client libraries     |
+| 4     | State Management          | SQLite integration with sqlite-jdbc, schema, CRUD operations |
+| 5     | Initial Sync              | Full download with folder hierarchy preservation             |
+| 6     | Incremental Sync          | Change detection and delta downloads                         |
+| 7     | Resume Support            | Crash recovery and partial download resumption               |
+| 8     | Export Handling           | Google Workspace file conversion                             |
+| 9     | Polish                    | Progress reporting, logging, error messages                  |
+| 10    | Native Image Optimization | Metadata collection, binary optimization, testing            |
+| 11    | Testing & Release         | Comprehensive testing, documentation, packaging              |
 
 ---
 
