@@ -43,53 +43,16 @@ Google Drive Downloader is a command-line utility that incrementally downloads a
 ### 3.1 High-Level Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                   Google Drive Downloader CLI                   │
-├─────────────────────────────────────────────────────────────────┤
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐  │
-│  │   Command   │  │   Config    │  │      Progress           │  │
-│  │   Parser    │  │   Manager   │  │      Reporter           │  │
-│  └─────────────┘  └─────────────┘  └─────────────────────────┘  │
-├─────────────────────────────────────────────────────────────────┤
-│                       Sync Engine                               │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐  │
-│  │  Change     │  │  Download   │  │      State              │  │
-│  │  Detector   │  │  Manager    │  │      Manager            │  │
-│  └─────────────┘  └─────────────┘  └─────────────────────────┘  │
-├─────────────────────────────────────────────────────────────────┤
-│                      Google Drive Client                        │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐  │
-│  │   OAuth     │  │   Files     │  │      Export             │  │
-│  │   Handler   │  │   API       │  │      Handler            │  │
-│  └─────────────┘  └─────────────┘  └─────────────────────────┘  │
-├─────────────────────────────────────────────────────────────────┤
-│                      Platform Layer                             │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐  │
-│  │   HTTP      │  │   File      │  │      JSON               │  │
-│  │   Client    │  │   System    │  │      Parser             │  │
-│  └─────────────┘  └─────────────┘  └─────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────┘
+INSERT DIAGRAM HERE
 ```
 
 ### 3.2 Component Descriptions
 
-**Command Parser:** Parses CLI arguments and dispatches to appropriate handlers. Supports commands like `sync`, `auth`, `status`, and `reset`.
+**Google Drive Client**: Handles communication with Google Drive APIs, including Oauth 2.0 authorization flow, and usage of the Files and Export APIs.
 
-**Config Manager:** Manages configuration including OAuth credentials path, download directory, export format preferences, and concurrency settings.
+**Sync Engine**: Orchestrates file download with support for concurrent transfers, retry logic, and partial download resumption. Persists sync state to enable incremental updates and crash recovery. Manages the local state database. Provides a mechanism for higher layers to subscribe to state changes, to allow progress reporting in a user-facing UI.
 
-**Progress Reporter:** Displays real-time progress information including files processed, bytes downloaded, and estimated time remaining.
-
-**Change Detector:** Compares remote file metadata against local state to identify files requiring download. Uses Google Drive's `modifiedTime` and file checksums.
-
-**Download Manager:** Orchestrates file downloads with support for concurrent transfers, retry logic, and partial download resumption.
-
-**State Manager:** Persists sync state to enable incremental updates and crash recovery. Manages the local state database.
-
-**OAuth Handler:** Implements OAuth 2.0 authorization code flow with PKCE. Manages token storage, refresh, and revocation.
-
-**Files API:** Wrapper around Google Drive Files API for listing, metadata retrieval, and content download.
-
-**Export Handler:** Converts Google Workspace files (Docs, Sheets, Slides) to downloadable formats (DOCX, XLSX, PPTX, PDF).
+**CLI Frontend**: Entry point. Submits commands to the sync engine and subscribes to state changes from the Sync Engine to report progress to the user at the keyboard.
 
 ---
 
