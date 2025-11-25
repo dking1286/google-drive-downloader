@@ -100,7 +100,7 @@ graph TB
 ### 4.1 Interface Specification
 
 ```kotlin
-package dev.dking.gdrivesync.api
+package dev.dking.googledrivedownloader.api
 
 import java.nio.file.Path
 import java.time.Instant
@@ -319,7 +319,7 @@ PROCEDURE RetryWithBackoff(operation, max_attempts=3):
 ### 5.1 Interface Specification
 
 ```kotlin
-package dev.dking.gdrivesync.sync
+package dev.dking.googledrivedownloader.sync
 
 import kotlinx.coroutines.flow.Flow
 import java.nio.file.Path
@@ -684,7 +684,7 @@ The application is designed for crash recovery through:
 ### 6.1 Command Structure
 
 ```kotlin
-package dev.dking.gdrivesync.cli
+package dev.dking.googledrivedownloader.cli
 
 import kotlinx.coroutines.flow.collect
 import java.nio.file.Path
@@ -1002,14 +1002,14 @@ dependencies {
 }
 
 application {
-    mainClass.set("dev.dking.gdrivesync.MainKt")
+    mainClass.set("dev.dking.googledrivedownloader.MainKt")
 }
 
 graalvmNative {
     binaries {
         named("main") {
             imageName.set("google-drive-downloader")
-            mainClass.set("dev.dking.gdrivesync.MainKt")
+            mainClass.set("dev.dking.googledrivedownloader.MainKt")
 
             buildArgs.addAll(listOf(
                 "--enable-http",
@@ -1150,67 +1150,7 @@ The OAuth flow uses PKCE (Proof Key for Code Exchange) to prevent authorization 
 
 ---
 
-## 10. Project Structure
-
-```
-google-drive-downloader/
-├── build.gradle.kts
-├── settings.gradle.kts
-├── gradle.properties
-├── src/
-│   ├── main/
-│   │   ├── kotlin/
-│   │   │   └── dev/dking/gdrivesync/
-│   │   │       ├── Main.kt
-│   │   │       ├── cli/
-│   │   │       │   ├── GDriveSyncCommand.kt
-│   │   │       │   ├── AuthCommand.kt
-│   │   │       │   ├── SyncCommand.kt
-│   │   │       │   ├── StatusCommand.kt
-│   │   │       │   ├── ResetCommand.kt
-│   │   │       │   └── ProgressReporter.kt
-│   │   │       ├── config/
-│   │   │       │   ├── ConfigManager.kt
-│   │   │       │   └── AppConfig.kt
-│   │   │       ├── api/
-│   │   │       │   ├── DriveClient.kt
-│   │   │       │   ├── OAuthHandler.kt
-│   │   │       │   ├── TokenStorage.kt
-│   │   │       │   ├── RateLimiter.kt
-│   │   │       │   └── RetryPolicy.kt
-│   │   │       ├── sync/
-│   │   │       │   ├── SyncEngine.kt
-│   │   │       │   ├── ChangeDetector.kt
-│   │   │       │   ├── DownloadManager.kt
-│   │   │       │   └── FileDownloader.kt
-│   │   │       ├── state/
-│   │   │       │   ├── StateManager.kt
-│   │   │       │   ├── Database.kt
-│   │   │       │   └── models/
-│   │   │       │       ├── FileRecord.kt
-│   │   │       │       └── SyncRun.kt
-│   │   │       ├── export/
-│   │   │       │   ├── ExportHandler.kt
-│   │   │       │   └── MimeTypeMapper.kt
-│   │   │       └── util/
-│   │   │           ├── FileUtils.kt
-│   │   │           └── FilenameSanitizer.kt
-│   │   └── resources/
-│   │       └── META-INF/
-│   │           └── native-image/
-│   │               ├── reflect-config.json
-│   │               ├── resource-config.json
-│   │               ├── jni-config.json
-│   │               └── proxy-config.json
-│   └── test/
-│       └── kotlin/
-│           └── dev/dking/gdrivesync/
-│               └── ... (test files)
-```
-
----
-
-## 11. Known Limitations
+## 10. Known Limitations
 
 - **No two-way sync:** This tool only downloads from Drive; local changes are not uploaded
 - **No real-time sync:** Synchronization is manual/scheduled, not continuous
@@ -1220,7 +1160,7 @@ google-drive-downloader/
 
 ---
 
-## 12. Future Enhancements
+## 11. Future Enhancements
 
 Potential features for future versions:
 
