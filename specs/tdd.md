@@ -822,6 +822,8 @@ data class AppConfig(
   "max_concurrent_downloads": 4,
   "retry_attempts": 3,
   "retry_delay_seconds": 5,
+  "client_id": "xyz",
+  "client_secret": "abc",
   "log_level": "info"
 }
 ```
