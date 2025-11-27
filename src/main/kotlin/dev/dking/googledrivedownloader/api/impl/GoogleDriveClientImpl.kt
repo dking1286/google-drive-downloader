@@ -2,8 +2,6 @@ package dev.dking.googledrivedownloader.api.impl
 
 import com.google.api.services.drive.model.Change
 import com.google.api.services.drive.model.File
-import dev.dking.googledrivedownloader.api.ApiException
-import dev.dking.googledrivedownloader.api.AuthenticationException
 import dev.dking.googledrivedownloader.api.ChangeList
 import dev.dking.googledrivedownloader.api.DriveClientConfig
 import dev.dking.googledrivedownloader.api.DriveFile
@@ -36,7 +34,7 @@ class GoogleDriveClientImpl(
   private val clientSecret: String,
   private val tokenManager: TokenManager,
 ) : GoogleDriveClient {
-  private val retryHandler = RetryHandler(config)
+  private val retryHandler = RetryHandler(config.retryAttempts, config.retryDelaySeconds)
   private val serviceFactory = DriveServiceFactory(clientId, clientSecret)
 
   override suspend fun authenticate(forceReauth: Boolean): Result<Unit> =

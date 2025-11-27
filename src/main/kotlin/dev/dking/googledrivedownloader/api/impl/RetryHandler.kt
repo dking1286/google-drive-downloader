@@ -1,7 +1,6 @@
 package dev.dking.googledrivedownloader.api.impl
 
 import com.google.api.client.googleapis.json.GoogleJsonResponseException
-import dev.dking.googledrivedownloader.api.DriveClientConfig
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.delay
 import java.io.IOException
@@ -16,7 +15,8 @@ private val logger = KotlinLogging.logger {}
  * Distinguishes between transient errors (retryable) and permanent errors (fail immediately).
  */
 class RetryHandler(
-  private val config: DriveClientConfig,
+  private val retryAttempts: Int,
+  private val retryDelaySeconds: Int,
 ) {
   /**
    * Execute an operation with retry logic and exponential backoff.
@@ -27,12 +27,12 @@ class RetryHandler(
    * @return Result containing the operation result or final error
    */
   suspend fun <T> executeWithRetry(operation: suspend () -> T): Result<T> {
-    var currentDelay = config.retryDelaySeconds * 1000L // Convert to milliseconds
+    var currentDelay = retryDelaySeconds * 1000L // Convert to milliseconds
     var lastException: Exception? = null
 
-    repeat(config.retryAttempts) { attempt ->
+    repeat(retryAttempts) { attempt ->
       try {
-        logger.debug { "Executing operation (attempt ${attempt + 1}/${config.retryAttempts})" }
+        logger.debug { "Executing operation (attempt ${attempt + 1}/$retryAttempts)" }
         val result = operation()
         return Result.success(result)
       } catch (e: Exception) {
@@ -46,7 +46,7 @@ class RetryHandler(
         }
 
         // Transient error - retry if we have attempts left
-        if (attempt < config.retryAttempts - 1) {
+        if (attempt < retryAttempts - 1) {
           // Calculate backoff with jitter
           val jitter = Random.nextDouble(0.75, 1.25) // ±25% jitter
           val exponentialDelay = currentDelay * (2.0.pow(attempt))
@@ -58,14 +58,14 @@ class RetryHandler(
 
           delay(delayMs)
         } else {
-          logger.error(e) { "Operation failed after ${config.retryAttempts} attempts" }
+          logger.error(e) { "Operation failed after $retryAttempts attempts" }
         }
       }
     }
 
     // All attempts exhausted
     return Result.failure(
-      lastException ?: ApiException("Operation failed after ${config.retryAttempts} attempts"),
+      lastException ?: ApiException("Operation failed after $retryAttempts attempts"),
     )
   }
 

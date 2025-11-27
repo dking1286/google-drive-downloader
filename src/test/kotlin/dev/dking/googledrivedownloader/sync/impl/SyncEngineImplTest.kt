@@ -7,13 +7,10 @@ import dev.dking.googledrivedownloader.api.GoogleDriveClient
 import dev.dking.googledrivedownloader.sync.FileRecord
 import dev.dking.googledrivedownloader.sync.SyncEngineConfig
 import dev.dking.googledrivedownloader.sync.SyncEvent
-import io.mockk.answers
 import io.mockk.clearAllMocks
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
-import io.mockk.secondArg
-import io.mockk.thirdArg
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.test.runTest
 import org.junit.jupiter.api.io.TempDir

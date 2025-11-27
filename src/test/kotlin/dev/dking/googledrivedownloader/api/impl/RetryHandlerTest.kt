@@ -3,7 +3,6 @@ package dev.dking.googledrivedownloader.api.impl
 import com.google.api.client.googleapis.json.GoogleJsonResponseException
 import com.google.api.client.http.HttpHeaders
 import com.google.api.client.http.HttpResponseException
-import dev.dking.googledrivedownloader.api.DriveClientConfig
 import kotlinx.coroutines.test.runTest
 import java.io.IOException
 import java.net.SocketTimeoutException
@@ -13,8 +12,9 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class RetryHandlerTest {
-  private val config = DriveClientConfig(retryAttempts = 3, retryDelaySeconds = 1)
-  private val retryHandler = RetryHandler(config)
+  private val retryAttempts = 3
+  private val retryDelaySeconds = 1
+  private val retryHandler = RetryHandler(retryAttempts, retryDelaySeconds)
 
   @Test
   fun `executeWithRetry succeeds on first attempt`() =
@@ -288,9 +288,9 @@ class RetryHandlerTest {
       // Assert
       assertTrue(result.isFailure)
       assertEquals(
-        config.retryAttempts,
+        retryAttempts,
         attemptCount,
-        "Should attempt exactly ${config.retryAttempts} times",
+        "Should attempt exactly $retryAttempts times",
       )
     }
 
