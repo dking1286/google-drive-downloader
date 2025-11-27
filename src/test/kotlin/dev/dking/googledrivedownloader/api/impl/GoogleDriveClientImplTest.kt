@@ -3,9 +3,11 @@ package dev.dking.googledrivedownloader.api.impl
 import dev.dking.googledrivedownloader.api.DriveClientConfig
 import dev.dking.googledrivedownloader.api.FileField
 import kotlinx.coroutines.test.runTest
+import java.nio.file.Files
 import java.nio.file.Path
+import kotlin.test.AfterTest
+import kotlin.test.BeforeTest
 import kotlin.test.Test
-import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -19,17 +21,31 @@ class GoogleDriveClientImplTest {
     private val testClientId = "test-client-id"
     private val testClientSecret = "test-client-secret"
 
-    private val client = GoogleDriveClientImpl(config, testClientId, testClientSecret)
+    private lateinit var tokenPath: Path
+
+    @BeforeTest
+    fun setup() {
+        val tempDir = Files.createTempDirectory("google-drive-client-test")
+        tokenPath = tempDir.resolve("tokens.json")
+    }
+
+    @AfterTest
+    fun cleanup() {
+        Files.walk(tokenPath.parent)
+            .sorted(Comparator.reverseOrder())
+            .forEach { Files.deleteIfExists(it) }
+    }
 
     @Test
     fun `constructor creates instance with correct configuration`() {
         // Verify that instance can be created
-        val instance = GoogleDriveClientImpl(config, testClientId, testClientSecret)
+        val instance = GoogleDriveClientImpl(config, testClientId, testClientSecret, TokenManager(tokenPath))
         assertFalse(instance.isAuthenticated(), "Should not be authenticated initially")
     }
 
     @Test
     fun `isAuthenticated returns false when no tokens exist`() {
+        val client = GoogleDriveClientImpl(config, testClientId, testClientSecret, TokenManager(tokenPath))
         // Should return false when there are no stored tokens
         val result = client.isAuthenticated()
         assertFalse(result, "Should not be authenticated without tokens")
@@ -40,6 +56,7 @@ class GoogleDriveClientImplTest {
 
     @Test
     fun `getStartPageToken fails when not authenticated`() = runTest {
+        val client = GoogleDriveClientImpl(config, testClientId, testClientSecret, TokenManager(tokenPath))
         // Should fail because we haven't authenticated
         val result = client.getStartPageToken()
 
@@ -50,6 +67,7 @@ class GoogleDriveClientImplTest {
 
     @Test
     fun `listAllFiles fails when not authenticated`() = runTest {
+        val client = GoogleDriveClientImpl(config, testClientId, testClientSecret, TokenManager(tokenPath))
         // Should fail because we haven't authenticated
         val result = client.listAllFiles(setOf(FileField.ID, FileField.NAME))
 
@@ -60,6 +78,7 @@ class GoogleDriveClientImplTest {
 
     @Test
     fun `listChanges fails when not authenticated`() = runTest {
+        val client = GoogleDriveClientImpl(config, testClientId, testClientSecret, TokenManager(tokenPath))
         // Should fail because we haven't authenticated
         val result = client.listChanges("test-page-token")
 
@@ -70,6 +89,7 @@ class GoogleDriveClientImplTest {
 
     @Test
     fun `downloadFile fails when not authenticated`() = runTest {
+        val client = GoogleDriveClientImpl(config, testClientId, testClientSecret, TokenManager(tokenPath))
         // Should fail because we haven't authenticated
         val result = client.downloadFile(
             fileId = "test-file-id",
@@ -84,6 +104,7 @@ class GoogleDriveClientImplTest {
 
     @Test
     fun `exportFile fails when not authenticated`() = runTest {
+        val client = GoogleDriveClientImpl(config, testClientId, testClientSecret, TokenManager(tokenPath))
         // Should fail because we haven't authenticated
         val result = client.exportFile(
             fileId = "test-file-id",
@@ -100,15 +121,16 @@ class GoogleDriveClientImplTest {
     fun `client properly uses retry handler configuration`() {
         // Verify that the client is created with the correct retry configuration
         val customConfig = DriveClientConfig(retryAttempts = 5, retryDelaySeconds = 10)
-        val customClient = GoogleDriveClientImpl(customConfig, testClientId, testClientSecret)
+        val customClient = GoogleDriveClientImpl(customConfig, testClientId, testClientSecret, TokenManager(tokenPath))
 
         assertFalse(customClient.isAuthenticated())
     }
 
     @Test
     fun `FileField mapping covers all enum values`() = runTest {
+        val client = GoogleDriveClientImpl(config, testClientId, testClientSecret, TokenManager(tokenPath))
         // This test ensures all FileField enum values can be requested
-        val allFields = FileField.values().toSet()
+        val allFields = FileField.entries.toSet()
 
         // Should not throw an exception during field mapping
         val result = client.listAllFiles(allFields)

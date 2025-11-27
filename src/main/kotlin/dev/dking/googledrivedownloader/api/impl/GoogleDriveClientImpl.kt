@@ -26,10 +26,10 @@ private val logger = KotlinLogging.logger {}
 class GoogleDriveClientImpl(
     private val config: DriveClientConfig = DriveClientConfig(),
     private val clientId: String,
-    private val clientSecret: String
+    private val clientSecret: String,
+    private val tokenManager: TokenManager
 ) : GoogleDriveClient {
 
-    private val tokenManager = TokenManager()
     private val retryHandler = RetryHandler(config)
     private val serviceFactory = DriveServiceFactory(clientId, clientSecret)
 
@@ -93,6 +93,18 @@ class GoogleDriveClientImpl(
 
         retryHandler.executeWithRetry {
             val service = createDriveService()
+
+            // Define required fields for non-nullable DriveFile properties
+            val requiredFields = setOf(
+                FileField.ID,
+                FileField.NAME,
+                FileField.MIME_TYPE,
+                FileField.MODIFIED_TIME
+            )
+
+            // Union required fields with caller-requested fields to prevent NPEs
+            val fieldsToRequest = requiredFields + fields
+
             val allFiles = mutableListOf<DriveFile>()
             var pageToken: String? = null
             var pageCount = 0
@@ -101,7 +113,7 @@ class GoogleDriveClientImpl(
                 pageCount++
                 val request = service.files().list()
                     .setPageSize(1000)
-                    .setFields("nextPageToken, files(${mapFieldsToString(fields)})")
+                    .setFields("nextPageToken, files(${mapFieldsToString(fieldsToRequest)})")
                     .setQ("trashed = false")
 
                 if (pageToken != null) {

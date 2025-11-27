@@ -7,7 +7,6 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.file.Paths
 import java.nio.file.attribute.PosixFilePermission
 import java.time.Instant
 
@@ -18,7 +17,7 @@ private val logger = KotlinLogging.logger {}
  * Stores tokens in ~/.google-drive-downloader/tokens.json with secure file permissions.
  */
 class TokenManager(
-    private val tokenPath: Path = defaultTokenPath()
+    private val tokenPath: Path
 ) {
     private val json = Json {
         prettyPrint = true
@@ -27,12 +26,6 @@ class TokenManager(
 
     companion object {
         private const val EXPIRY_BUFFER_MINUTES = 5L
-
-        fun defaultTokenPath(): Path {
-            val home = System.getProperty("user.home")
-            val configDir = Paths.get(home, ".google-drive-downloader")
-            return configDir.resolve("tokens.json")
-        }
     }
 
     /**
