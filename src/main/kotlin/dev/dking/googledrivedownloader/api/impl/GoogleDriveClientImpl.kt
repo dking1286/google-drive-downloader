@@ -11,12 +11,10 @@ import dev.dking.googledrivedownloader.api.GoogleDriveClient
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.io.OutputStream
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.nio.file.StandardCopyOption
-import java.security.MessageDigest
 import java.time.Instant
 
 private val logger = KotlinLogging.logger {}
@@ -258,7 +256,7 @@ class GoogleDriveClientImpl(
 
         // Verify MD5 checksum if available
         if (expectedMd5 != null) {
-          val actualMd5 = computeMd5(tempPath)
+          val actualMd5 = Md5Utils.computeMd5(tempPath)
           if (actualMd5 != expectedMd5) {
             Files.deleteIfExists(tempPath)
             if (!isRetry) {
@@ -422,64 +420,5 @@ class GoogleDriveClientImpl(
           null
         },
     )
-  }
-
-  companion object {
-    /**
-     * Compute MD5 hash of a file and return it as a lowercase hex string.
-     *
-     * @param path Path to the file
-     * @return MD5 hash as lowercase hex string
-     */
-    internal fun computeMd5(path: Path): String {
-      val md = MessageDigest.getInstance("MD5")
-      Files.newInputStream(path).use { inputStream ->
-        val buffer = ByteArray(8192)
-        var bytesRead: Int
-        while (inputStream.read(buffer).also { bytesRead = it } != -1) {
-          md.update(buffer, 0, bytesRead)
-        }
-      }
-      return md.digest().joinToString("") { "%02x".format(it) }
-    }
-  }
-
-  /**
-   * An OutputStream wrapper that counts the number of bytes written.
-   * Used for accurate progress reporting when total file size is unknown.
-   *
-   * @param delegate The underlying output stream to write to
-   */
-  internal class CountingOutputStream(private val delegate: OutputStream) : OutputStream() {
-    /** The total number of bytes written to this stream */
-    var bytesWritten: Long = 0L
-      private set
-
-    override fun write(b: Int) {
-      delegate.write(b)
-      bytesWritten++
-    }
-
-    override fun write(b: ByteArray) {
-      delegate.write(b)
-      bytesWritten += b.size
-    }
-
-    override fun write(
-      b: ByteArray,
-      off: Int,
-      len: Int,
-    ) {
-      delegate.write(b, off, len)
-      bytesWritten += len
-    }
-
-    override fun flush() {
-      delegate.flush()
-    }
-
-    override fun close() {
-      delegate.close()
-    }
   }
 }
