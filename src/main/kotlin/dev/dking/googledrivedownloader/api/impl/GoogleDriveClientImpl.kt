@@ -15,6 +15,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.nio.file.StandardCopyOption
+import java.security.MessageDigest
 import java.time.Instant
 
 private val logger = KotlinLogging.logger {}
@@ -198,58 +199,107 @@ class GoogleDriveClientImpl(
   ): Result<Unit> =
     withContext(Dispatchers.IO) {
       logger.info { "Downloading file $fileId to $outputPath" }
+      downloadFileInternal(fileId, outputPath, onProgress, isRetry = false)
+    }
 
-      retryHandler.executeWithRetry {
-        val service = createDriveService()
+  /**
+   * Internal download implementation with MD5 verification and retry-once on checksum mismatch.
+   *
+   * @param fileId Google Drive file ID
+   * @param outputPath Local path where file should be saved
+   * @param onProgress Progress callback
+   * @param isRetry Whether this is a retry attempt after MD5 mismatch
+   * @return Result indicating success or failure
+   */
+  private suspend fun downloadFileInternal(
+    fileId: String,
+    outputPath: Path,
+    onProgress: (bytesDownloaded: Long, totalBytes: Long?) -> Unit,
+    isRetry: Boolean,
+  ): Result<Unit> =
+    retryHandler.executeWithRetry {
+      val service = createDriveService()
 
-        // Get file metadata for size
-        val metadata = service.files().get(fileId).setFields("size").execute()
-        val totalBytes = metadata.size?.toLong()
+      // Get file metadata for size and MD5 checksum
+      val metadata = service.files().get(fileId).setFields("size,md5Checksum").execute()
+      val totalBytes = metadata.size?.toLong()
+      val expectedMd5 = metadata.md5Checksum
 
-        // Create parent directories
-        Files.createDirectories(outputPath.parent)
+      // Create parent directories
+      Files.createDirectories(outputPath.parent)
 
-        // Create temp file
-        val tempPath = Paths.get(outputPath.toString() + ".tmp")
+      // Create temp file path
+      val tempPath = Paths.get("$outputPath.tmp")
 
-        try {
-          // Download to temp file
-          Files.newOutputStream(tempPath).use { outputStream ->
-            val request = service.files().get(fileId)
+      // Delete any existing temp file from interrupted download (simple restart)
+      if (Files.exists(tempPath)) {
+        logger.info { "Deleting existing temp file from interrupted download: $tempPath" }
+        Files.deleteIfExists(tempPath)
+      }
 
-            // Configure progress listener
-            request.mediaHttpDownloader?.apply {
-              isDirectDownloadEnabled = false
-              setProgressListener { downloader ->
-                val downloaded =
-                  if (totalBytes != null) {
-                    (downloader.progress * totalBytes.toDouble()).toLong()
-                  } else {
-                    0L
-                  }
-                onProgress(downloaded, totalBytes)
-              }
+      try {
+        // Download to temp file
+        Files.newOutputStream(tempPath).use { outputStream ->
+          val request = service.files().get(fileId)
+
+          // Configure progress listener
+          request.mediaHttpDownloader?.apply {
+            isDirectDownloadEnabled = false
+            setProgressListener { downloader ->
+              val downloaded =
+                if (totalBytes != null) {
+                  (downloader.progress * totalBytes.toDouble()).toLong()
+                } else {
+                  0L
+                }
+              onProgress(downloaded, totalBytes)
             }
-
-            // Execute download
-            request.executeMediaAndDownloadTo(outputStream)
           }
 
-          // Atomic rename
-          Files.move(
-            tempPath,
-            outputPath,
-            StandardCopyOption.ATOMIC_MOVE,
-            StandardCopyOption.REPLACE_EXISTING,
-          )
-
-          logger.info { "Downloaded file successfully: $outputPath" }
-        } catch (e: Exception) {
-          // Clean up temp file on error
-          Files.deleteIfExists(tempPath)
-          logger.error(e) { "Download failed, cleaning up temp file" }
-          throw e
+          // Execute download
+          request.executeMediaAndDownloadTo(outputStream)
         }
+
+        // Verify MD5 checksum if available
+        if (expectedMd5 != null) {
+          val actualMd5 = computeMd5(tempPath)
+          if (actualMd5 != expectedMd5) {
+            Files.deleteIfExists(tempPath)
+            if (!isRetry) {
+              logger.warn {
+                "MD5 mismatch for file $fileId: expected $expectedMd5, got $actualMd5. Retrying..."
+              }
+              // Retry once - this will throw if it fails again
+              return@executeWithRetry downloadFileInternal(
+                fileId,
+                outputPath,
+                onProgress,
+                isRetry = true,
+              ).getOrThrow()
+            }
+            throw ApiException(
+              "MD5 checksum mismatch after retry: expected $expectedMd5, got $actualMd5",
+            )
+          }
+          logger.debug { "MD5 checksum verified: $actualMd5" }
+        } else {
+          logger.debug { "No MD5 checksum available for verification (file $fileId)" }
+        }
+
+        // Atomic rename
+        Files.move(
+          tempPath,
+          outputPath,
+          StandardCopyOption.ATOMIC_MOVE,
+          StandardCopyOption.REPLACE_EXISTING,
+        )
+
+        logger.info { "Downloaded file successfully: $outputPath" }
+      } catch (e: Exception) {
+        // Clean up temp file on error
+        Files.deleteIfExists(tempPath)
+        logger.error(e) { "Download failed, cleaning up temp file" }
+        throw e
       }
     }
 
@@ -267,8 +317,14 @@ class GoogleDriveClientImpl(
         // Create parent directories
         Files.createDirectories(outputPath.parent)
 
-        // Create temp file
-        val tempPath = Paths.get(outputPath.toString() + ".tmp")
+        // Create temp file path
+        val tempPath = Paths.get("$outputPath.tmp")
+
+        // Delete any existing temp file from interrupted export (simple restart)
+        if (Files.exists(tempPath)) {
+          logger.info { "Deleting existing temp file from interrupted export: $tempPath" }
+          Files.deleteIfExists(tempPath)
+        }
 
         try {
           // Export file
@@ -370,5 +426,25 @@ class GoogleDriveClientImpl(
           null
         },
     )
+  }
+
+  companion object {
+    /**
+     * Compute MD5 hash of a file and return it as a lowercase hex string.
+     *
+     * @param path Path to the file
+     * @return MD5 hash as lowercase hex string
+     */
+    internal fun computeMd5(path: Path): String {
+      val md = MessageDigest.getInstance("MD5")
+      Files.newInputStream(path).use { inputStream ->
+        val buffer = ByteArray(8192)
+        var bytesRead: Int
+        while (inputStream.read(buffer).also { bytesRead = it } != -1) {
+          md.update(buffer, 0, bytesRead)
+        }
+      }
+      return md.digest().joinToString("") { "%02x".format(it) }
+    }
   }
 }
