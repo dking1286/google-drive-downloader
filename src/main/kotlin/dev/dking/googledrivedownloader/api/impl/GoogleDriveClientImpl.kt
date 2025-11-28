@@ -25,17 +25,15 @@ private val logger = KotlinLogging.logger {}
  * with retry logic and exponential backoff.
  *
  * @param config Configuration for retry attempts and delays
- * @param clientId OAuth 2.0 client ID
- * @param clientSecret OAuth 2.0 client secret
+ * @param serviceFactory Factory for creating Google Drive service instances
+ * @param tokenManager Manager for storing and retrieving OAuth tokens
  */
 class GoogleDriveClientImpl(
   private val config: DriveClientConfig = DriveClientConfig(),
-  private val clientId: String,
-  private val clientSecret: String,
+  private val serviceFactory: DriveServiceFactory,
   private val tokenManager: TokenManager,
 ) : GoogleDriveClient {
   private val retryHandler = RetryHandler(config.retryAttempts, config.retryDelaySeconds)
-  private val serviceFactory = DriveServiceFactory(clientId, clientSecret)
 
   override suspend fun authenticate(forceReauth: Boolean): Result<Unit> =
     withContext(Dispatchers.IO) {

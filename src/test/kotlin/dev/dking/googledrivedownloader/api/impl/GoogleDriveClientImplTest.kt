@@ -17,8 +17,7 @@ import kotlin.test.assertTrue
  */
 class GoogleDriveClientImplTest {
   private val config = DriveClientConfig(retryAttempts = 3, retryDelaySeconds = 1)
-  private val testClientId = "test-client-id"
-  private val testClientSecret = "test-client-secret"
+  private val serviceFactory = DriveServiceFactory("test-client-id", "test-client-secret")
 
   private lateinit var tokenPath: Path
 
@@ -39,14 +38,14 @@ class GoogleDriveClientImplTest {
   fun `constructor creates instance with correct configuration`() {
     // Verify that instance can be created
     val instance =
-      GoogleDriveClientImpl(config, testClientId, testClientSecret, TokenManager(tokenPath))
+      GoogleDriveClientImpl(config, serviceFactory, TokenManager(tokenPath))
     assertFalse(instance.isAuthenticated(), "Should not be authenticated initially")
   }
 
   @Test
   fun `isAuthenticated returns false when no tokens exist`() {
     val client =
-      GoogleDriveClientImpl(config, testClientId, testClientSecret, TokenManager(tokenPath))
+      GoogleDriveClientImpl(config, serviceFactory, TokenManager(tokenPath))
     // Should return false when there are no stored tokens
     val result = client.isAuthenticated()
     assertFalse(result, "Should not be authenticated without tokens")
@@ -61,8 +60,7 @@ class GoogleDriveClientImplTest {
       val client =
         GoogleDriveClientImpl(
           config,
-          testClientId,
-          testClientSecret,
+          serviceFactory,
           TokenManager(tokenPath),
         )
       // Should fail because we haven't authenticated
@@ -79,8 +77,7 @@ class GoogleDriveClientImplTest {
       val client =
         GoogleDriveClientImpl(
           config,
-          testClientId,
-          testClientSecret,
+          serviceFactory,
           TokenManager(tokenPath),
         )
       // Should fail because we haven't authenticated
@@ -97,8 +94,7 @@ class GoogleDriveClientImplTest {
       val client =
         GoogleDriveClientImpl(
           config,
-          testClientId,
-          testClientSecret,
+          serviceFactory,
           TokenManager(tokenPath),
         )
       // Should fail because we haven't authenticated
@@ -115,8 +111,7 @@ class GoogleDriveClientImplTest {
       val client =
         GoogleDriveClientImpl(
           config,
-          testClientId,
-          testClientSecret,
+          serviceFactory,
           TokenManager(tokenPath),
         )
       // Should fail because we haven't authenticated
@@ -138,8 +133,7 @@ class GoogleDriveClientImplTest {
       val client =
         GoogleDriveClientImpl(
           config,
-          testClientId,
-          testClientSecret,
+          serviceFactory,
           TokenManager(tokenPath),
         )
       // Should fail because we haven't authenticated
@@ -162,8 +156,7 @@ class GoogleDriveClientImplTest {
     val customClient =
       GoogleDriveClientImpl(
         customConfig,
-        testClientId,
-        testClientSecret,
+        serviceFactory,
         TokenManager(tokenPath),
       )
 
@@ -176,8 +169,7 @@ class GoogleDriveClientImplTest {
       val client =
         GoogleDriveClientImpl(
           config,
-          testClientId,
-          testClientSecret,
+          serviceFactory,
           TokenManager(tokenPath),
         )
       // This test ensures all FileField enum values can be requested
