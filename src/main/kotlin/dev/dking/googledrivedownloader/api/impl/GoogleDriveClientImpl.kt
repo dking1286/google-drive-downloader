@@ -11,6 +11,7 @@ import dev.dking.googledrivedownloader.api.GoogleDriveClient
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.OutputStream
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
@@ -238,21 +239,16 @@ class GoogleDriveClientImpl(
       }
 
       try {
-        // Download to temp file
-        Files.newOutputStream(tempPath).use { outputStream ->
+        // Download to temp file using CountingOutputStream for accurate progress
+        val countingStream = CountingOutputStream(Files.newOutputStream(tempPath))
+        countingStream.use { outputStream ->
           val request = service.files().get(fileId)
 
           // Configure progress listener
           request.mediaHttpDownloader?.apply {
             isDirectDownloadEnabled = false
-            setProgressListener { downloader ->
-              val downloaded =
-                if (totalBytes != null) {
-                  (downloader.progress * totalBytes.toDouble()).toLong()
-                } else {
-                  0L
-                }
-              onProgress(downloaded, totalBytes)
+            setProgressListener {
+              onProgress(countingStream.bytesWritten, totalBytes)
             }
           }
 
@@ -445,6 +441,45 @@ class GoogleDriveClientImpl(
         }
       }
       return md.digest().joinToString("") { "%02x".format(it) }
+    }
+  }
+
+  /**
+   * An OutputStream wrapper that counts the number of bytes written.
+   * Used for accurate progress reporting when total file size is unknown.
+   *
+   * @param delegate The underlying output stream to write to
+   */
+  internal class CountingOutputStream(private val delegate: OutputStream) : OutputStream() {
+    /** The total number of bytes written to this stream */
+    var bytesWritten: Long = 0L
+      private set
+
+    override fun write(b: Int) {
+      delegate.write(b)
+      bytesWritten++
+    }
+
+    override fun write(b: ByteArray) {
+      delegate.write(b)
+      bytesWritten += b.size
+    }
+
+    override fun write(
+      b: ByteArray,
+      off: Int,
+      len: Int,
+    ) {
+      delegate.write(b, off, len)
+      bytesWritten += len
+    }
+
+    override fun flush() {
+      delegate.flush()
+    }
+
+    override fun close() {
+      delegate.close()
     }
   }
 }
