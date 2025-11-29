@@ -59,11 +59,20 @@ fun main(args: Array<String>): Unit =
         retryDelaySeconds = 5,
       )
 
+    val baseDirectory =
+      Paths.get(
+        System.getProperty("user.home"),
+        ".google-drive-downloader",
+        "downloads",
+      )
+    Files.createDirectories(baseDirectory)
+
     val driveClient =
       GoogleDriveClientImpl(
         config = driveClientConfig,
         serviceFactory = serviceFactory,
         tokenManager = tokenManager,
+        baseDirectory = baseDirectory,
       )
 
     driveClient.authenticate(false)

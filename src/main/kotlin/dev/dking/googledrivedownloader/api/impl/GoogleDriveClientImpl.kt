@@ -27,13 +27,31 @@ private val logger = KotlinLogging.logger {}
  * @param config Configuration for retry attempts and delays
  * @param serviceFactory Factory for creating Google Drive service instances
  * @param tokenManager Manager for storing and retrieving OAuth tokens
+ * @param baseDirectory Base directory for all file operations. All output paths must be within this directory.
  */
 class GoogleDriveClientImpl(
   private val config: DriveClientConfig = DriveClientConfig(),
   private val serviceFactory: DriveServiceFactory,
   private val tokenManager: TokenManager,
+  private val baseDirectory: Path,
 ) : GoogleDriveClient {
   private val retryHandler = RetryHandler(config.retryAttempts, config.retryDelaySeconds)
+
+  /**
+   * Validates that the given output path is within the configured base directory.
+   * This prevents path traversal attacks where malicious file names could write
+   * outside the intended download directory.
+   *
+   * @param outputPath The path to validate
+   * @throws IllegalArgumentException if the path escapes the base directory
+   */
+  private fun validateOutputPath(outputPath: Path) {
+    val normalizedOutput = outputPath.normalize().toAbsolutePath()
+    val normalizedBase = baseDirectory.normalize().toAbsolutePath()
+    require(normalizedOutput.startsWith(normalizedBase)) {
+      "Output path $outputPath escapes base directory $baseDirectory"
+    }
+  }
 
   override suspend fun authenticate(forceReauth: Boolean): Result<Unit> =
     withContext(Dispatchers.IO) {
@@ -197,6 +215,7 @@ class GoogleDriveClientImpl(
     onProgress: (bytesDownloaded: Long, totalBytes: Long?) -> Unit,
   ): Result<Unit> =
     withContext(Dispatchers.IO) {
+      validateOutputPath(outputPath)
       logger.info { "Downloading file $fileId to $outputPath" }
       downloadFileInternal(fileId, outputPath, onProgress, isRetry = false)
     }
@@ -303,6 +322,7 @@ class GoogleDriveClientImpl(
     outputPath: Path,
   ): Result<Unit> =
     withContext(Dispatchers.IO) {
+      validateOutputPath(outputPath)
       logger.info { "Exporting file $fileId to $outputPath as $exportMimeType" }
 
       retryHandler.executeWithRetry {
