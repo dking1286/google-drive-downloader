@@ -8,6 +8,7 @@ import io.github.oshai.kotlinlogging.KotlinLogging
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
+import java.util.UUID
 import kotlin.io.path.exists
 import kotlin.io.path.fileSize
 import kotlin.io.path.name
@@ -160,8 +161,8 @@ internal class FileOperations(
       // Create parent directories
       Files.createDirectories(localPath.parent)
 
-      // Download to temporary file
-      val tempPath = localPath.resolveSibling("${localPath.name}.tmp")
+      // Download to temporary file with unpredictable name to prevent symlink attacks
+      val tempPath = localPath.resolveSibling(".${UUID.randomUUID()}.download.tmp")
 
       val result =
         driveClient.downloadFile(
@@ -221,8 +222,8 @@ internal class FileOperations(
       // Create parent directories
       Files.createDirectories(localPath.parent)
 
-      // Download to temporary file
-      val tempPath = localPath.resolveSibling("${localPath.name}.tmp")
+      // Download to temporary file with unpredictable name to prevent symlink attacks
+      val tempPath = localPath.resolveSibling(".${UUID.randomUUID()}.download.tmp")
 
       val result =
         driveClient.exportFile(
