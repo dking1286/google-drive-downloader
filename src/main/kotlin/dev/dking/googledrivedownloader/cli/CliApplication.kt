@@ -157,27 +157,41 @@ object CliApplication {
     output: PrintStream,
     error: PrintStream,
   ): Int {
-    output.println("Dry run - showing what would be downloaded:")
-    output.println()
+    reporter.println("Dry run - showing what would be downloaded:")
+    reporter.println()
 
     // Get sync status to show pending files
-    return when (val result = engine.getSyncStatus()) {
-      else ->
-        if (result.isSuccess) {
-          val status = result.getOrThrow()
-          output.println("Files to sync: ${status.pendingFiles}")
-          output.println("Total size: ${formatBytes(status.totalSize)}")
-
-          if (status.failedFiles > 0) {
-            output.println("Previously failed files: ${status.failedFiles}")
-          }
-
-          ExitCodes.SUCCESS
-        } else {
-          error.println("Failed to get sync status: ${result.exceptionOrNull()?.message}")
-          ExitCodes.FAILURE
-        }
+    val statusResult = engine.getSyncStatus()
+    if (statusResult.isFailure) {
+      error.println("Failed to get sync status: ${statusResult.exceptionOrNull()?.message}")
+      return ExitCodes.FAILURE
     }
+
+    val status = statusResult.getOrThrow()
+    reporter.println("Files to sync: ${status.pendingFiles}")
+    reporter.println("Total size: ${formatBytes(status.totalSize)}")
+
+    // Show failed files that would be retried
+    if (status.failedFiles > 0) {
+      reporter.println()
+      reporter.println("Previously failed files (${status.failedFiles} total):")
+
+      val failedFilesResult = engine.getFailedFiles()
+      if (failedFilesResult.isSuccess) {
+        val failedFiles = failedFilesResult.getOrThrow()
+        for (file in failedFiles.take(10)) {
+          reporter.println("  - ${file.name}: ${file.errorMessage ?: "Unknown error"}")
+        }
+        if (failedFiles.size > 10) {
+          reporter.println("  ... and ${failedFiles.size - 10} more")
+        }
+      }
+    }
+
+    reporter.println()
+    reporter.println("No files will be downloaded (dry run mode).")
+
+    return ExitCodes.SUCCESS
   }
 
   @Suppress("UNUSED_PARAMETER")
