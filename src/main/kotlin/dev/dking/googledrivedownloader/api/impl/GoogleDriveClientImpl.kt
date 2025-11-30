@@ -8,6 +8,7 @@ import dev.dking.googledrivedownloader.api.DriveFile
 import dev.dking.googledrivedownloader.api.FileChange
 import dev.dking.googledrivedownloader.api.FileField
 import dev.dking.googledrivedownloader.api.GoogleDriveClient
+import dev.dking.googledrivedownloader.files.PathValidator
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -38,41 +39,15 @@ class GoogleDriveClientImpl(
   private val retryHandler = RetryHandler(config.retryAttempts, config.retryDelaySeconds)
 
   /**
-   * Validates that the given output path is within the configured base directory.
-   * This prevents path traversal attacks where malicious file names could write
-   * outside the intended download directory.
+   * Validates that the given output path is safe for file operations.
+   * Uses PathValidator for both path traversal and symlink attack prevention.
    *
    * @param outputPath The path to validate
-   * @throws IllegalArgumentException if the path escapes the base directory
+   * @throws IllegalArgumentException if validation fails
    */
   private fun validateOutputPath(outputPath: Path) {
-    val normalizedOutput = outputPath.normalize().toAbsolutePath()
-    val normalizedBase = baseDirectory.normalize().toAbsolutePath()
-    require(normalizedOutput.startsWith(normalizedBase)) {
-      "Output path $outputPath escapes base directory $baseDirectory"
-    }
-  }
-
-  /**
-   * Validates that no component of the output path (including parents) is a symbolic link.
-   * This prevents symlink attacks where an attacker could redirect writes to arbitrary locations.
-   *
-   * @param outputPath The path to validate
-   * @throws IllegalArgumentException if any path component is a symlink
-   */
-  private fun validateNoSymlinks(outputPath: Path) {
-    val normalizedPath = outputPath.normalize().toAbsolutePath()
-    val normalizedBase = baseDirectory.normalize().toAbsolutePath()
-
-    // Check each existing path component from base directory to output path
-    var currentPath = normalizedBase
-    for (component in normalizedBase.relativize(normalizedPath)) {
-      currentPath = currentPath.resolve(component)
-      if (Files.exists(currentPath) && Files.isSymbolicLink(currentPath)) {
-        throw IllegalArgumentException(
-          "Symlink detected in path: $currentPath. Symlinks are not allowed for security reasons.",
-        )
-      }
+    PathValidator.validatePath(outputPath, baseDirectory).onFailure { exception ->
+      throw IllegalArgumentException(exception.message, exception)
     }
   }
 
@@ -239,7 +214,6 @@ class GoogleDriveClientImpl(
   ): Result<Unit> =
     withContext(Dispatchers.IO) {
       validateOutputPath(outputPath)
-      validateNoSymlinks(outputPath)
       logger.info { "Downloading file $fileId to $outputPath" }
       downloadFileInternal(fileId, outputPath, onProgress, isRetry = false)
     }
@@ -341,7 +315,6 @@ class GoogleDriveClientImpl(
   ): Result<Unit> =
     withContext(Dispatchers.IO) {
       validateOutputPath(outputPath)
-      validateNoSymlinks(outputPath)
       logger.info { "Exporting file $fileId to $outputPath as $exportMimeType" }
 
       retryHandler.executeWithRetry {
