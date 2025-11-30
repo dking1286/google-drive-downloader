@@ -384,6 +384,7 @@ class GoogleDriveClientImpl(
         FileField.MODIFIED_TIME -> "modifiedTime"
         FileField.SIZE -> "size"
         FileField.SHORTCUT_DETAILS -> "shortcutDetails"
+        FileField.TRASHED -> "trashed"
       }
     }
   }
@@ -409,6 +410,7 @@ class GoogleDriveClientImpl(
       size = apiFile.getSize(),
       isFolder = apiFile.mimeType == "application/vnd.google-apps.folder",
       shortcutTargetId = apiFile.shortcutDetails?.targetId,
+      trashed = apiFile.trashed ?: false,
     )
   }
 

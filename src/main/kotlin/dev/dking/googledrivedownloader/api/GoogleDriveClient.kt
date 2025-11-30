@@ -85,6 +85,7 @@ data class DriveFile(
   val size: Long?,
   val isFolder: Boolean,
   val shortcutTargetId: String? = null,
+  val trashed: Boolean = false,
 )
 
 /**
@@ -116,6 +117,7 @@ enum class FileField {
   MODIFIED_TIME,
   SIZE,
   SHORTCUT_DETAILS,
+  TRASHED,
 }
 
 /**

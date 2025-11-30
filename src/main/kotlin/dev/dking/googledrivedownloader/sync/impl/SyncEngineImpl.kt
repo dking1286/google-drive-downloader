@@ -199,9 +199,9 @@ class SyncEngineImpl(
           logger.info { "Processing ${changes.size} changes..." }
           var pendingCount = 0
           for (change in changes) {
-            if (change.removed || change.file == null) {
-              // File was deleted
-              logger.debug { "File ${change.fileId} was removed" }
+            if (change.removed || change.file == null || change.file.trashed) {
+              // File was deleted or trashed
+              logger.debug { "File ${change.fileId} was removed or trashed" }
               if (config.deleteRemovedFiles) {
                 val existingFile = db.getFile(change.fileId)
                 if (existingFile?.localPath != null) {
