@@ -10,10 +10,11 @@ import dev.dking.googledrivedownloader.sync.SyncStatusSnapshot
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.withContext
 import java.nio.file.Files
@@ -477,14 +478,28 @@ class SyncEngineImpl(
                 db.updateFileStatus(file.id, FileRecord.SyncStatus.DOWNLOADING)
               }
 
+              // Use a channel to communicate progress from non-suspend callback to suspend onProgress
+              // This avoids blocking the thread with runBlocking
+              val progressChannel = Channel<ProgressUpdate>(Channel.UNLIMITED)
+
+              // Launch a coroutine to consume progress updates
+              val progressJob =
+                launch {
+                  for (update in progressChannel) {
+                    onProgress(file.id, file.name, update.bytes, update.total)
+                  }
+                }
+
               var lastBytes = 0L
               val result =
                 fileOps.downloadFile(file) { bytes, total ->
-                  runBlocking {
-                    onProgress(file.id, file.name, bytes, total)
-                  }
+                  progressChannel.trySend(ProgressUpdate(bytes, total))
                   lastBytes = bytes
                 }
+
+              // Close channel and wait for all progress updates to be processed
+              progressChannel.close()
+              progressJob.join()
 
               if (result.isSuccess) {
                 db.withDatabaseLock {
@@ -517,3 +532,8 @@ class SyncEngineImpl(
     }
   }
 }
+
+/**
+ * Progress update data for channel-based progress reporting.
+ */
+private data class ProgressUpdate(val bytes: Long, val total: Long?)
