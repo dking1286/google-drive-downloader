@@ -184,6 +184,72 @@ class RetryHandlerTest {
     }
 
   @Test
+  fun `executeWithRetry retries on 500 internal server error`() =
+    runTest {
+      // Arrange
+      var attemptCount = 0
+      val operation =
+        suspend {
+          attemptCount++
+          if (attemptCount < 2) {
+            throw createGoogleJsonResponseException(500, "Internal server error")
+          }
+          "success"
+        }
+
+      // Act
+      val result = retryHandler.executeWithRetry(operation)
+
+      // Assert
+      assertTrue(result.isSuccess)
+      assertEquals(2, attemptCount, "Should have retried after 500")
+    }
+
+  @Test
+  fun `executeWithRetry retries on 502 bad gateway`() =
+    runTest {
+      // Arrange
+      var attemptCount = 0
+      val operation =
+        suspend {
+          attemptCount++
+          if (attemptCount < 2) {
+            throw createGoogleJsonResponseException(502, "Bad gateway")
+          }
+          "success"
+        }
+
+      // Act
+      val result = retryHandler.executeWithRetry(operation)
+
+      // Assert
+      assertTrue(result.isSuccess)
+      assertEquals(2, attemptCount, "Should have retried after 502")
+    }
+
+  @Test
+  fun `executeWithRetry retries on 504 gateway timeout`() =
+    runTest {
+      // Arrange
+      var attemptCount = 0
+      val operation =
+        suspend {
+          attemptCount++
+          if (attemptCount < 2) {
+            throw createGoogleJsonResponseException(504, "Gateway timeout")
+          }
+          "success"
+        }
+
+      // Act
+      val result = retryHandler.executeWithRetry(operation)
+
+      // Assert
+      assertTrue(result.isSuccess)
+      assertEquals(2, attemptCount, "Should have retried after 504")
+    }
+
+  @Test
   fun `executeWithRetry fails immediately on 401 unauthorized`() =
     runTest {
       // Arrange - Test with GoogleJsonResponseException
@@ -238,6 +304,64 @@ class RetryHandlerTest {
       assertTrue(
         exception is FileNotFoundException,
         "Expected FileNotFoundException but got ${exception?.javaClass?.simpleName}",
+      )
+    }
+
+  @Test
+  fun `executeWithRetry fails immediately on 400 bad request`() =
+    runTest {
+      // Arrange - Test with GoogleJsonResponseException
+      var attemptCount = 0
+      val googleException = createGoogleJsonResponseException(400, "Bad request")
+
+      // First verify the exception is created correctly
+      assertEquals(400, googleException.statusCode)
+
+      val operation =
+        suspend {
+          attemptCount++
+          throw googleException
+        }
+
+      // Act
+      val result = retryHandler.executeWithRetry(operation)
+
+      // Assert
+      assertTrue(result.isFailure)
+      assertEquals(1, attemptCount, "Should NOT retry after 400 (got $attemptCount attempts)")
+      val exception = result.exceptionOrNull()
+      assertTrue(
+        exception is ApiException,
+        "Expected ApiException but got ${exception?.javaClass?.simpleName}",
+      )
+    }
+
+  @Test
+  fun `executeWithRetry fails immediately on 403 forbidden`() =
+    runTest {
+      // Arrange - Test with GoogleJsonResponseException
+      var attemptCount = 0
+      val googleException = createGoogleJsonResponseException(403, "Forbidden")
+
+      // First verify the exception is created correctly
+      assertEquals(403, googleException.statusCode)
+
+      val operation =
+        suspend {
+          attemptCount++
+          throw googleException
+        }
+
+      // Act
+      val result = retryHandler.executeWithRetry(operation)
+
+      // Assert
+      assertTrue(result.isFailure)
+      assertEquals(1, attemptCount, "Should NOT retry after 403 (got $attemptCount attempts)")
+      val exception = result.exceptionOrNull()
+      assertTrue(
+        exception is AuthenticationException,
+        "Expected AuthenticationException but got ${exception?.javaClass?.simpleName}",
       )
     }
 
