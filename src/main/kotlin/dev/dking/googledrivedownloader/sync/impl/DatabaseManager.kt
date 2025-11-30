@@ -31,6 +31,30 @@ internal class DatabaseManager(databasePath: Path) : AutoCloseable {
   suspend fun <T> withDatabaseLock(block: () -> T): T = mutex.withLock { block() }
 
   /**
+   * Execute multiple database operations in a transaction.
+   * All operations will be committed together on success, or rolled back on failure.
+   * This provides atomicity for batch operations like inserting multiple files.
+   */
+  fun <T> executeInTransaction(block: () -> T): T {
+    val originalAutoCommit = connection.autoCommit
+    return try {
+      connection.autoCommit = false
+      val result = block()
+      connection.commit()
+      result
+    } catch (e: Exception) {
+      try {
+        connection.rollback()
+      } catch (rollbackException: Exception) {
+        e.addSuppressed(rollbackException)
+      }
+      throw e
+    } finally {
+      connection.autoCommit = originalAutoCommit
+    }
+  }
+
+  /**
    * Initialize database schema if not exists.
    */
   private fun initializeSchema() {

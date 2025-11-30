@@ -555,4 +555,113 @@ class DatabaseManagerTest {
     assertEquals("test.txt", file.name)
     newDb.close()
   }
+
+  // ======================== Transaction Tests ========================
+
+  @Test
+  fun `executeInTransaction commits all operations on success`() {
+    val now = Instant.now()
+
+    db.executeInTransaction {
+      db.upsertFile(
+        "f1", "file1.txt", "text/plain", null, "file1.txt", null,
+        now, 100L, false, FileRecord.SyncStatus.PENDING,
+      )
+      db.upsertFile(
+        "f2", "file2.txt", "text/plain", null, "file2.txt", null,
+        now, 200L, false, FileRecord.SyncStatus.PENDING,
+      )
+      db.upsertFile(
+        "f3", "file3.txt", "text/plain", null, "file3.txt", null,
+        now, 300L, false, FileRecord.SyncStatus.PENDING,
+      )
+    }
+
+    // All files should be persisted
+    assertNotNull(db.getFile("f1"))
+    assertNotNull(db.getFile("f2"))
+    assertNotNull(db.getFile("f3"))
+  }
+
+  @Test
+  fun `executeInTransaction rolls back all operations on failure`() {
+    val now = Instant.now()
+
+    try {
+      db.executeInTransaction {
+        db.upsertFile(
+          "f1", "file1.txt", "text/plain", null, "file1.txt", null,
+          now, 100L, false, FileRecord.SyncStatus.PENDING,
+        )
+        db.upsertFile(
+          "f2", "file2.txt", "text/plain", null, "file2.txt", null,
+          now, 200L, false, FileRecord.SyncStatus.PENDING,
+        )
+        // Simulate failure
+        throw RuntimeException("Simulated failure")
+      }
+    } catch (e: RuntimeException) {
+      assertEquals("Simulated failure", e.message)
+    }
+
+    // All files should be rolled back
+    assertNull(db.getFile("f1"))
+    assertNull(db.getFile("f2"))
+  }
+
+  @Test
+  fun `executeInTransaction returns result from block`() {
+    val now = Instant.now()
+
+    val result =
+      db.executeInTransaction {
+        db.upsertFile(
+          "f1", "file1.txt", "text/plain", null, "file1.txt", null,
+          now, 100L, false, FileRecord.SyncStatus.PENDING,
+        )
+        "transaction completed"
+      }
+
+    assertEquals("transaction completed", result)
+    assertNotNull(db.getFile("f1"))
+  }
+
+  @Test
+  fun `executeInTransaction restores autoCommit state after success`() {
+    val now = Instant.now()
+
+    db.executeInTransaction {
+      db.upsertFile(
+        "f1", "file1.txt", "text/plain", null, "file1.txt", null,
+        now, 100L, false, FileRecord.SyncStatus.PENDING,
+      )
+    }
+
+    // Operations after transaction should still work (autoCommit restored)
+    db.upsertFile(
+      "f2", "file2.txt", "text/plain", null, "file2.txt", null,
+      now, 200L, false, FileRecord.SyncStatus.PENDING,
+    )
+    assertNotNull(db.getFile("f2"))
+  }
+
+  @Test
+  fun `executeInTransaction restores autoCommit state after failure`() {
+    val now = Instant.now()
+
+    try {
+      db.executeInTransaction {
+        throw RuntimeException("Simulated failure")
+      }
+    } catch (e: RuntimeException) {
+      // Expected
+    }
+
+    // Operations after failed transaction should still work (autoCommit restored)
+    db.upsertFile(
+      "f1", "file1.txt", "text/plain", null, "file1.txt", null,
+      now, 100L, false, FileRecord.SyncStatus.PENDING,
+    )
+    assertNotNull(db.getFile("f1"))
+  }
 }
