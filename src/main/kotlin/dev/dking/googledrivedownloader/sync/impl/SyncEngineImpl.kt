@@ -473,7 +473,9 @@ class SyncEngineImpl(
           async {
             semaphore.acquire()
             try {
-              db.updateFileStatus(file.id, FileRecord.SyncStatus.DOWNLOADING)
+              db.withDatabaseLock {
+                db.updateFileStatus(file.id, FileRecord.SyncStatus.DOWNLOADING)
+              }
 
               var lastBytes = 0L
               val result =
@@ -485,19 +487,23 @@ class SyncEngineImpl(
                 }
 
               if (result.isSuccess) {
-                db.updateFileStatus(
-                  file.id,
-                  FileRecord.SyncStatus.COMPLETE,
-                  Instant.now(),
-                )
+                db.withDatabaseLock {
+                  db.updateFileStatus(
+                    file.id,
+                    FileRecord.SyncStatus.COMPLETE,
+                    Instant.now(),
+                  )
+                }
                 onCompleted(file.id, file.name, file.size ?: lastBytes)
               } else {
                 val error = result.exceptionOrNull()?.message ?: "Unknown error"
-                db.updateFileStatus(
-                  file.id,
-                  FileRecord.SyncStatus.ERROR,
-                  errorMessage = error,
-                )
+                db.withDatabaseLock {
+                  db.updateFileStatus(
+                    file.id,
+                    FileRecord.SyncStatus.ERROR,
+                    errorMessage = error,
+                  )
+                }
                 onFailed(file.id, file.name, error)
               }
             } finally {

@@ -1,6 +1,8 @@
 package dev.dking.googledrivedownloader.sync.impl
 
 import dev.dking.googledrivedownloader.sync.FileRecord
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.nio.file.Path
 import java.sql.Connection
 import java.sql.DriverManager
@@ -10,13 +12,23 @@ import java.time.Instant
 /**
  * Manages SQLite database operations for sync state persistence.
  * Handles schema initialization and CRUD operations for files, sync runs, and change tokens.
+ *
+ * Thread safety: All database operations are serialized via a mutex to ensure safe concurrent
+ * access from multiple coroutines. SQLite connections are not thread-safe by default.
  */
 internal class DatabaseManager(databasePath: Path) : AutoCloseable {
   private val connection: Connection = DriverManager.getConnection("jdbc:sqlite:$databasePath")
+  private val mutex = Mutex()
 
   init {
     initializeSchema()
   }
+
+  /**
+   * Execute a database operation with mutex lock for thread safety.
+   * Use this when calling database methods from concurrent coroutines.
+   */
+  suspend fun <T> withDatabaseLock(block: () -> T): T = mutex.withLock { block() }
 
   /**
    * Initialize database schema if not exists.
