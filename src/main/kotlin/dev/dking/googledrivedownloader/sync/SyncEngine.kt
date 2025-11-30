@@ -33,9 +33,9 @@ interface SyncEngine {
 
   /**
    * Get current sync status snapshot without performing a sync.
-   * @return Result containing current SyncStatus or error
+   * @return Result containing current SyncStatusSnapshot or error
    */
-  suspend fun getSyncStatus(): Result<SyncStatus>
+  suspend fun getSyncStatus(): Result<SyncStatusSnapshot>
 
   /**
    * Get list of files that failed to sync in the last run.
@@ -84,7 +84,7 @@ sealed class SyncEvent {
 /**
  * Current sync status snapshot.
  */
-data class SyncStatus(
+data class SyncStatusSnapshot(
   val lastSyncTime: Instant?,
   val filesTracked: Int,
   val totalSize: Long,

@@ -1,7 +1,7 @@
 package dev.dking.googledrivedownloader.cli
 
 import dev.dking.googledrivedownloader.sync.SyncEvent
-import dev.dking.googledrivedownloader.sync.SyncStatus
+import dev.dking.googledrivedownloader.sync.SyncStatusSnapshot
 
 /**
  * Progress reporter for displaying sync events to the user.
@@ -50,7 +50,7 @@ class ProgressReporter {
   /**
    * Display current sync status.
    */
-  fun displayStatus(status: SyncStatus) {
+  fun displayStatus(status: SyncStatusSnapshot) {
     println("Last sync: ${status.lastSyncTime ?: "Never"}")
     println("Files tracked: ${status.filesTracked}")
     println("Total size: ${formatBytes(status.totalSize)}")

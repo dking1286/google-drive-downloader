@@ -6,7 +6,7 @@ import dev.dking.googledrivedownloader.sync.FileRecord
 import dev.dking.googledrivedownloader.sync.SyncEngine
 import dev.dking.googledrivedownloader.sync.SyncEngineConfig
 import dev.dking.googledrivedownloader.sync.SyncEvent
-import dev.dking.googledrivedownloader.sync.SyncStatus
+import dev.dking.googledrivedownloader.sync.SyncStatusSnapshot
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -389,14 +389,14 @@ class SyncEngineImpl(
       }
     }
 
-  override suspend fun getSyncStatus(): Result<SyncStatus> {
+  override suspend fun getSyncStatus(): Result<SyncStatusSnapshot> {
     return try {
       DatabaseManager(databasePath).use { db ->
         val lastRun = db.getLastSyncRun()
         val stats = db.getSyncStatistics()
 
         Result.success(
-          SyncStatus(
+          SyncStatusSnapshot(
             lastSyncTime = lastRun?.completedAt,
             filesTracked = stats.totalFiles,
             totalSize = stats.totalSize,
