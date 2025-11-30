@@ -342,4 +342,118 @@ class GoogleDriveClientImplTest {
       assertTrue(result.isFailure)
       assertTrue(result.exceptionOrNull() is AuthenticationException)
     }
+
+  // Symlink attack protection tests
+
+  @Test
+  fun `downloadFile rejects path containing symlink`() =
+    runTest {
+      val client =
+        GoogleDriveClientImpl(
+          config,
+          serviceFactory,
+          TokenManager(tokenPath),
+          baseDir,
+        )
+
+      // Create a symlink inside the base directory pointing outside
+      val symlinkDir = baseDir.resolve("symlink-dir")
+      val targetDir = tempDir.resolve("outside-target")
+      Files.createDirectories(targetDir)
+      Files.createSymbolicLink(symlinkDir, targetDir)
+
+      // Try to download through the symlink
+      val pathThroughSymlink = symlinkDir.resolve("file.txt")
+
+      assertFailsWith<IllegalArgumentException> {
+        client.downloadFile(
+          fileId = "test-file-id",
+          outputPath = pathThroughSymlink,
+          onProgress = { _, _ -> },
+        )
+      }
+    }
+
+  @Test
+  fun `downloadFile rejects symlink as direct target`() =
+    runTest {
+      val client =
+        GoogleDriveClientImpl(
+          config,
+          serviceFactory,
+          TokenManager(tokenPath),
+          baseDir,
+        )
+
+      // Create a symlink file inside the base directory
+      val targetFile = tempDir.resolve("outside-file.txt")
+      Files.createFile(targetFile)
+      val symlinkFile = baseDir.resolve("symlink-file.txt")
+      Files.createSymbolicLink(symlinkFile, targetFile)
+
+      assertFailsWith<IllegalArgumentException> {
+        client.downloadFile(
+          fileId = "test-file-id",
+          outputPath = symlinkFile,
+          onProgress = { _, _ -> },
+        )
+      }
+    }
+
+  @Test
+  fun `exportFile rejects path containing symlink`() =
+    runTest {
+      val client =
+        GoogleDriveClientImpl(
+          config,
+          serviceFactory,
+          TokenManager(tokenPath),
+          baseDir,
+        )
+
+      // Create a symlink inside the base directory pointing outside
+      val symlinkDir = baseDir.resolve("export-symlink-dir")
+      val targetDir = tempDir.resolve("export-target")
+      Files.createDirectories(targetDir)
+      Files.createSymbolicLink(symlinkDir, targetDir)
+
+      // Try to export through the symlink
+      val pathThroughSymlink = symlinkDir.resolve("document.pdf")
+
+      assertFailsWith<IllegalArgumentException> {
+        client.exportFile(
+          fileId = "test-file-id",
+          exportMimeType = "application/pdf",
+          outputPath = pathThroughSymlink,
+        )
+      }
+    }
+
+  @Test
+  fun `downloadFile accepts path without symlinks`() =
+    runTest {
+      val client =
+        GoogleDriveClientImpl(
+          config,
+          serviceFactory,
+          TokenManager(tokenPath),
+          baseDir,
+        )
+
+      // Create real directories (not symlinks)
+      val realSubdir = baseDir.resolve("real-subdir")
+      Files.createDirectories(realSubdir)
+
+      val validPath = realSubdir.resolve("file.txt")
+      val result =
+        client.downloadFile(
+          fileId = "test-file-id",
+          outputPath = validPath,
+          onProgress = { _, _ -> },
+        )
+
+      // Should fail due to authentication, not symlink validation
+      assertTrue(result.isFailure)
+      assertTrue(result.exceptionOrNull() is AuthenticationException)
+    }
 }

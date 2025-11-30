@@ -53,6 +53,29 @@ class GoogleDriveClientImpl(
     }
   }
 
+  /**
+   * Validates that no component of the output path (including parents) is a symbolic link.
+   * This prevents symlink attacks where an attacker could redirect writes to arbitrary locations.
+   *
+   * @param outputPath The path to validate
+   * @throws IllegalArgumentException if any path component is a symlink
+   */
+  private fun validateNoSymlinks(outputPath: Path) {
+    val normalizedPath = outputPath.normalize().toAbsolutePath()
+    val normalizedBase = baseDirectory.normalize().toAbsolutePath()
+
+    // Check each existing path component from base directory to output path
+    var currentPath = normalizedBase
+    for (component in normalizedBase.relativize(normalizedPath)) {
+      currentPath = currentPath.resolve(component)
+      if (Files.exists(currentPath) && Files.isSymbolicLink(currentPath)) {
+        throw IllegalArgumentException(
+          "Symlink detected in path: $currentPath. Symlinks are not allowed for security reasons.",
+        )
+      }
+    }
+  }
+
   override suspend fun authenticate(forceReauth: Boolean): Result<Unit> =
     withContext(Dispatchers.IO) {
       try {
@@ -216,6 +239,7 @@ class GoogleDriveClientImpl(
   ): Result<Unit> =
     withContext(Dispatchers.IO) {
       validateOutputPath(outputPath)
+      validateNoSymlinks(outputPath)
       logger.info { "Downloading file $fileId to $outputPath" }
       downloadFileInternal(fileId, outputPath, onProgress, isRetry = false)
     }
@@ -323,6 +347,7 @@ class GoogleDriveClientImpl(
   ): Result<Unit> =
     withContext(Dispatchers.IO) {
       validateOutputPath(outputPath)
+      validateNoSymlinks(outputPath)
       logger.info { "Exporting file $fileId to $outputPath as $exportMimeType" }
 
       retryHandler.executeWithRetry {
