@@ -110,6 +110,47 @@ class FileOperationsTest {
     assertTrue(result.toByteArray(Charsets.UTF_8).size <= 255)
   }
 
+  @Test
+  fun `sanitizeFilename replaces Windows invalid characters`() {
+    val invalidName = "file<name>:with*bad?\"chars|test\\path.txt"
+
+    val result = fileOps.sanitizeFilename(invalidName)
+
+    assertEquals("file_name__with_bad__chars_test_path.txt", result)
+  }
+
+  @Test
+  fun `sanitizeFilename removes trailing dots and spaces`() {
+    assertEquals("filename", fileOps.sanitizeFilename("filename..."))
+    assertEquals("filename", fileOps.sanitizeFilename("filename   "))
+    assertEquals("filename", fileOps.sanitizeFilename("filename. . ."))
+  }
+
+  @Test
+  fun `sanitizeFilename handles all dots and spaces`() {
+    assertEquals("_", fileOps.sanitizeFilename("..."))
+    assertEquals("_", fileOps.sanitizeFilename("   "))
+    assertEquals("_", fileOps.sanitizeFilename(". . ."))
+  }
+
+  @Test
+  fun `sanitizeFilename prefixes Windows reserved names`() {
+    assertEquals("_CON", fileOps.sanitizeFilename("CON"))
+    assertEquals("_con", fileOps.sanitizeFilename("con"))
+    assertEquals("_PRN.txt", fileOps.sanitizeFilename("PRN.txt"))
+    assertEquals("_NUL", fileOps.sanitizeFilename("NUL"))
+    assertEquals("_COM1", fileOps.sanitizeFilename("COM1"))
+    assertEquals("_LPT9.doc", fileOps.sanitizeFilename("LPT9.doc"))
+  }
+
+  @Test
+  fun `sanitizeFilename allows non-reserved similar names`() {
+    // These should NOT be prefixed
+    assertEquals("CONSOLE", fileOps.sanitizeFilename("CONSOLE"))
+    assertEquals("PRINTER", fileOps.sanitizeFilename("PRINTER"))
+    assertEquals("COM10", fileOps.sanitizeFilename("COM10"))
+  }
+
   // ======================== buildLocalPath Tests ========================
 
   @Test

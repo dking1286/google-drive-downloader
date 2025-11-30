@@ -37,16 +37,53 @@ internal class FileOperations(
         "application/vnd.openxmlformats-officedocument.presentationml.presentation" to ".pptx",
         "image/png" to ".png",
       )
+
+    // Windows reserved device names (case-insensitive)
+    private val WINDOWS_RESERVED_NAMES =
+      setOf(
+        "CON", "PRN", "AUX", "NUL",
+        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+      )
   }
 
   /**
    * Sanitize a filename to be safe for the local filesystem.
+   * Handles:
+   * - Characters invalid on various platforms (/, \, :, *, ?, ", <, >, |)
+   * - Null character
+   * - Windows reserved names (CON, PRN, AUX, NUL, COM1-9, LPT1-9)
+   * - Trailing dots and spaces (Windows issue)
+   * - Filename length limits (255 bytes UTF-8)
    */
   fun sanitizeFilename(name: String): String {
+    // Replace invalid filesystem characters
     var sanitized =
       name
         .replace("/", "_")
+        .replace("\\", "_")
+        .replace(":", "_")
+        .replace("*", "_")
+        .replace("?", "_")
+        .replace("\"", "_")
+        .replace("<", "_")
+        .replace(">", "_")
+        .replace("|", "_")
         .replace("\u0000", "_")
+
+    // Remove trailing dots and spaces (Windows issue)
+    sanitized = sanitized.trimEnd('.', ' ')
+
+    // If the entire name was dots/spaces, use a placeholder
+    if (sanitized.isEmpty()) {
+      sanitized = "_"
+    }
+
+    // Handle Windows reserved names (case-insensitive)
+    val baseName = sanitized.substringBefore(".")
+    if (WINDOWS_RESERVED_NAMES.contains(baseName.uppercase())) {
+      sanitized = "_$sanitized"
+    }
 
     // Truncate to 255 bytes (UTF-8)
     val bytes = sanitized.toByteArray(Charsets.UTF_8)
