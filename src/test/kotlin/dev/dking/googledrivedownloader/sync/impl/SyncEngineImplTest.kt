@@ -670,79 +670,75 @@ class SyncEngineImplTest {
   @Test
   fun `resumeSync continues interrupted sync when pending files exist`() =
     runTest {
-      // Setup interrupted sync scenario by doing initial sync that fails partway
       val pageToken = "token123"
-      val testFile1 =
-        DriveFile(
+
+      // Manually set up database state with an interrupted sync
+      val databaseDir = tempDir.resolve(".google-drive-downloader")
+      java.nio.file.Files.createDirectories(databaseDir)
+      val databasePath = databaseDir.resolve("state.db")
+
+      DatabaseManager(databasePath).use { db ->
+        // Create a sync run with "running" status (simulating interruption)
+        db.createSyncRun(Instant.now(), pageToken)
+        // Leave it in "running" status to simulate an interruption
+
+        // Insert files with PENDING status
+        db.upsertFile(
           id = "file1",
-          name = "completed.txt",
+          name = "pending1.txt",
           mimeType = "text/plain",
           parentId = null,
-          md5Checksum = "abc123",
+          localPath = "pending1.txt",
+          remoteMd5 = "abc123",
           modifiedTime = Instant.now(),
           size = 100,
           isFolder = false,
+          syncStatus = FileRecord.SyncStatus.PENDING,
         )
-      val testFile2 =
-        DriveFile(
+
+        // Insert another file with PENDING status
+        db.upsertFile(
           id = "file2",
-          name = "pending.txt",
+          name = "pending2.txt",
           mimeType = "text/plain",
           parentId = null,
-          md5Checksum = "def456",
+          localPath = "pending2.txt",
+          remoteMd5 = "def456",
           modifiedTime = Instant.now(),
           size = 200,
           isFolder = false,
+          syncStatus = FileRecord.SyncStatus.PENDING,
         )
 
-      var downloadCount = 0
-      coEvery { driveClient.getStartPageToken() } returns Result.success(pageToken)
-      coEvery {
-        driveClient.listAllFiles(any())
-      } returns Result.success(listOf(testFile1, testFile2))
-      coEvery { driveClient.downloadFile(any(), any(), any()) } answers {
-        downloadCount++
-        if (downloadCount == 1) {
-          // First download succeeds - create the temp file
-          val outputPath = secondArg<java.nio.file.Path>()
-          java.nio.file.Files.createDirectories(outputPath.parent)
-          java.nio.file.Files.write(outputPath, ByteArray(100))
-          Result.success(Unit)
-        } else {
-          // Simulate interruption by throwing exception
-          throw RuntimeException("Interrupted")
-        }
+        // Save the change token
+        db.saveChangeToken(pageToken, Instant.now())
       }
 
-      // Initial sync will be interrupted
-      try {
-        syncEngine.initialSync().toList()
-      } catch (e: Exception) {
-        // Expected
-      }
-
-      // Reset mock for resume
+      // Mock the download
       coEvery { driveClient.downloadFile(any(), any(), any()) } answers {
         val outputPath = secondArg<java.nio.file.Path>()
         java.nio.file.Files.createDirectories(outputPath.parent)
-        java.nio.file.Files.write(outputPath, ByteArray(200))
+        java.nio.file.Files.write(outputPath, ByteArray(100))
         Result.success(Unit)
       }
-
-      // Mock listChanges in case resumeSync falls back to incremental sync
-      coEvery { driveClient.listChanges(any()) } returns
-        Result.success(
-          ChangeList(changes = emptyList(), newStartPageToken = "token456"),
-        )
 
       // Now resume
       val events = syncEngine.resumeSync().toList()
 
-      // resumeSync falls back to incremental sync when no interrupted sync is found
-      // (the sync run wasn't persisted due to the exception rollback)
+      // Verify resumed sync processed the pending files
+      assertTrue(events.any { it is SyncEvent.Started })
+      assertTrue(events.any { it is SyncEvent.DiscoveringFiles })
+      val discoveringEvent = events.filterIsInstance<SyncEvent.DiscoveringFiles>().first()
+      assertEquals(2, discoveringEvent.filesFound)
+
+      assertTrue(events.any { it is SyncEvent.FileQueued && it.fileId == "file1" })
+      assertTrue(events.any { it is SyncEvent.FileQueued && it.fileId == "file2" })
+      assertTrue(events.any { it is SyncEvent.FileCompleted && it.fileId == "file1" })
+      assertTrue(events.any { it is SyncEvent.FileCompleted && it.fileId == "file2" })
       assertTrue(events.last() is SyncEvent.Completed)
+
       val completed = events.last() as SyncEvent.Completed
-      // Since the incremental sync has no new changes, filesProcessed is 0
-      assertEquals(0, completed.filesProcessed)
+      assertEquals(2, completed.filesProcessed)
+      assertEquals(0, completed.failedFiles)
     }
 }
