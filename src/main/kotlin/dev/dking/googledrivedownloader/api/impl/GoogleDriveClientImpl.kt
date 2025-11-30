@@ -13,9 +13,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.nio.file.Files
 import java.nio.file.Path
-import java.nio.file.Paths
 import java.nio.file.StandardCopyOption
 import java.time.Instant
+import java.util.UUID
 
 private val logger = KotlinLogging.logger {}
 
@@ -270,14 +270,8 @@ class GoogleDriveClientImpl(
       // Create parent directories
       Files.createDirectories(outputPath.parent)
 
-      // Create temp file path
-      val tempPath = Paths.get("$outputPath.tmp")
-
-      // Delete any existing temp file from interrupted download (simple restart)
-      if (Files.exists(tempPath)) {
-        logger.info { "Deleting existing temp file from interrupted download: $tempPath" }
-        Files.deleteIfExists(tempPath)
-      }
+      // Create temp file path with unpredictable name to prevent symlink attacks
+      val tempPath = outputPath.parent.resolve(".${UUID.randomUUID()}.download.tmp")
 
       try {
         // Download to temp file using CountingOutputStream for accurate progress
@@ -356,14 +350,8 @@ class GoogleDriveClientImpl(
         // Create parent directories
         Files.createDirectories(outputPath.parent)
 
-        // Create temp file path
-        val tempPath = Paths.get("$outputPath.tmp")
-
-        // Delete any existing temp file from interrupted export (simple restart)
-        if (Files.exists(tempPath)) {
-          logger.info { "Deleting existing temp file from interrupted export: $tempPath" }
-          Files.deleteIfExists(tempPath)
-        }
+        // Create temp file path with unpredictable name to prevent symlink attacks
+        val tempPath = outputPath.parent.resolve(".${UUID.randomUUID()}.download.tmp")
 
         try {
           // Export file
