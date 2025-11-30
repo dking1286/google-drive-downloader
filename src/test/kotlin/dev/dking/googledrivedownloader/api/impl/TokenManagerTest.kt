@@ -255,4 +255,145 @@ class TokenManagerTest {
     assertEquals("Bearer", loaded.tokenType)
     assertEquals("https://www.googleapis.com/auth/drive.readonly", loaded.scope)
   }
+
+  // Edge case tests
+
+  @Test
+  fun `saveTokens handles null refresh token`() {
+    // Arrange
+    val credential = mockk<Credential>()
+    every { credential.accessToken } returns "test-access-token"
+    every { credential.refreshToken } returns null
+    every { credential.expiresInSeconds } returns 3600L
+
+    // Act
+    tokenManager.saveTokens(credential)
+    val loaded = tokenManager.loadTokens()
+
+    // Assert
+    assertNotNull(loaded, "Should load saved tokens")
+    assertEquals("test-access-token", loaded.accessToken)
+    assertNull(loaded.refreshToken, "Refresh token should be null")
+  }
+
+  @Test
+  fun `saveTokens handles null expiresInSeconds with default`() {
+    // Arrange
+    val credential = mockk<Credential>()
+    every { credential.accessToken } returns "test-access-token"
+    every { credential.refreshToken } returns "test-refresh-token"
+    every { credential.expiresInSeconds } returns null // Default should be 3600L
+
+    // Act
+    tokenManager.saveTokens(credential)
+    val loaded = tokenManager.loadTokens()
+
+    // Assert
+    assertNotNull(loaded, "Should load saved tokens")
+    assertEquals("test-access-token", loaded.accessToken)
+    // Verify the expiry is approximately 1 hour in the future
+    val expiresAt = Instant.parse(loaded.expiresAt)
+    val now = Instant.now()
+    assertTrue(
+      expiresAt.isAfter(now.plusSeconds(3500)),
+      "Should expire approximately 1 hour from now",
+    )
+    assertTrue(
+      expiresAt.isBefore(now.plusSeconds(3700)),
+      "Should expire approximately 1 hour from now",
+    )
+  }
+
+  @Test
+  fun `loadTokens ignores unknown keys in JSON`() {
+    // Arrange - JSON with extra unknown keys
+    val expiresAt = Instant.now().plusSeconds(3600)
+    val jsonContent =
+      """
+      {
+        "accessToken": "test-access-token",
+        "refreshToken": "test-refresh-token",
+        "tokenType": "Bearer",
+        "expiresAt": "$expiresAt",
+        "scope": "https://www.googleapis.com/auth/drive.readonly",
+        "unknownField": "should be ignored",
+        "anotherUnknownField": 12345
+      }
+      """.trimIndent()
+    Files.writeString(tokenPath, jsonContent)
+
+    // Act
+    val tokens = tokenManager.loadTokens()
+
+    // Assert
+    assertNotNull(tokens, "Should load tokens even with unknown fields")
+    assertEquals("test-access-token", tokens.accessToken)
+  }
+
+  @Test
+  fun `loadTokens returns null for empty file`() {
+    // Arrange
+    Files.writeString(tokenPath, "")
+
+    // Act
+    val tokens = tokenManager.loadTokens()
+
+    // Assert
+    assertNull(tokens, "Should return null for empty file")
+  }
+
+  @Test
+  fun `loadTokens returns null for whitespace-only file`() {
+    // Arrange
+    Files.writeString(tokenPath, "   \n\t  ")
+
+    // Act
+    val tokens = tokenManager.loadTokens()
+
+    // Assert
+    assertNull(tokens, "Should return null for whitespace-only file")
+  }
+
+  @Test
+  fun `isTokenValid returns true for tokens just outside buffer`() {
+    // Arrange - tokens that expire in 6 minutes (just outside 5-minute buffer)
+    val expiresAt = Instant.now().plusSeconds(360) // 6 minutes
+    val tokens =
+      TokenManager.StoredTokens(
+        accessToken = "test-token",
+        refreshToken = "test-refresh",
+        tokenType = "Bearer",
+        expiresAt = expiresAt.toString(),
+        scope = "https://www.googleapis.com/auth/drive.readonly",
+      )
+
+    // Act
+    val isValid = tokenManager.isTokenValid(tokens)
+
+    // Assert
+    assertTrue(isValid, "Tokens expiring in 6 minutes (outside buffer) should be valid")
+  }
+
+  @Test
+  fun `saveTokens overwrites existing token file`() {
+    // Arrange - save initial tokens
+    val credential1 = mockk<Credential>()
+    every { credential1.accessToken } returns "first-access-token"
+    every { credential1.refreshToken } returns "first-refresh-token"
+    every { credential1.expiresInSeconds } returns 3600L
+    tokenManager.saveTokens(credential1)
+
+    // Act - save new tokens
+    val credential2 = mockk<Credential>()
+    every { credential2.accessToken } returns "second-access-token"
+    every { credential2.refreshToken } returns "second-refresh-token"
+    every { credential2.expiresInSeconds } returns 7200L
+    tokenManager.saveTokens(credential2)
+    val loaded = tokenManager.loadTokens()
+
+    // Assert
+    assertNotNull(loaded, "Should load saved tokens")
+    assertEquals("second-access-token", loaded.accessToken, "Should have new access token")
+    assertEquals("second-refresh-token", loaded.refreshToken, "Should have new refresh token")
+  }
 }
