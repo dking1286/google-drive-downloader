@@ -105,7 +105,7 @@ data class FileRecord(
   val modifiedTime: Instant,
   val size: Long?,
   val isFolder: Boolean,
-  val syncStatus: SyncStatus,
+  val syncStatus: FileRecord.SyncStatus,
   val lastSynced: Instant?,
   val errorMessage: String?,
 ) {
