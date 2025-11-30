@@ -1,601 +1,534 @@
-# SyncEngine Implementation Review
+# SyncEngine Implementation Analysis
 
-**Date:** 2025-11-25
-**Reviewer:** Claude Code
+**Date:** 2025-11-29
+**Scope:** `dev.dking.googledrivedownloader.sync` package
 **Files Reviewed:**
-- `src/main/kotlin/dev/dking/googledrivedownloader/sync/impl/SyncEngineImpl.kt`
-- `src/main/kotlin/dev/dking/googledrivedownloader/sync/impl/DatabaseManager.kt`
-- `src/main/kotlin/dev/dking/googledrivedownloader/sync/impl/FileOperations.kt`
-- `src/test/kotlin/dev/dking/googledrivedownloader/sync/impl/SyncEngineImplTest.kt`
-
-**Reference:** `specs/tdd.md` (Technical Design Document)
+- `SyncEngine.kt` (interface)
+- `impl/SyncEngineImpl.kt`
+- `impl/DatabaseManager.kt`
+- `impl/FileOperations.kt`
+- `impl/SyncEngineImplTest.kt`
 
 ---
 
-## 1. TDD Compliance Assessment
+## 1. TDD Compliance Analysis
 
-### ✅ Interface Implementation
-The implementation successfully implements all methods specified in the TDD (Section 5.1):
-- `initialSync()`, `incrementalSync()`, `resumeSync()` all return `Flow<SyncEvent>`
-- `getSyncStatus()` and `getFailedFiles()` return `Result<T>` as specified
-- All SyncEvent types are properly emitted
+### 1.1 Interface Specification
 
-### ✅ Core Algorithms Implemented Correctly
+| TDD Requirement | Status | Notes |
+|-----------------|--------|-------|
+| `initialSync(): Flow<SyncEvent>` | **Implemented** | Correctly returns Flow of events |
+| `incrementalSync(): Flow<SyncEvent>` | **Implemented** | Correctly uses change tokens |
+| `resumeSync(): Flow<SyncEvent>` | **Implemented** | Falls back to incremental when no interrupted sync |
+| `getSyncStatus(): Result<SyncStatus>` | **Implemented** | Returns correct statistics |
+| `getFailedFiles(): Result<List<FileRecord>>` | **Implemented** | Queries ERROR status files |
 
-**Initial Sync** (SyncEngineImpl.kt:38-127):
-- Follows the TDD algorithm (Section 5.3.1) correctly
-- Gets start page token, lists files, inserts to database, downloads breadth-first, saves change token
+### 1.2 SyncEvent Types
 
-**Incremental Sync** (SyncEngineImpl.kt:129-237):
-- Follows the TDD algorithm (Section 5.3.2) correctly
-- Handles new, modified, and removed files as specified
-- Respects `deleteRemovedFiles` configuration
+| Event Type | Status | Notes |
+|------------|--------|-------|
+| `Started` | **Implemented** | Emitted at sync start with syncRunId and timestamp |
+| `DiscoveringFiles` | **Implemented** | Emitted after listing files/changes |
+| `FileQueued` | **Implemented** | Emitted for each file to process |
+| `FileDownloading` | **Implemented** | Emitted during download progress |
+| `FileCompleted` | **Implemented** | Emitted after successful download |
+| `FileFailed` | **Implemented** | Emitted on download failure |
+| `Progress` | **Implemented** | Emitted after each file completion |
+| `Completed` | **Implemented** | Emitted at sync end |
+| `Failed` | **Implemented** | Emitted on fatal error |
 
-**Resume Sync** (SyncEngineImpl.kt:239-306):
-- Follows the TDD algorithm (Section 5.3.3) correctly
-- Checks for interrupted syncs and resumes pending files
-- Falls back to incremental sync when no interruption
+### 1.3 Algorithm Compliance
 
-### ✅ Database Schema Compliance
-DatabaseManager correctly implements the schema from Section 5.2:
-- All three tables (`files`, `sync_runs`, `change_tokens`) match the specification
-- Indexes on `parent_id` and `sync_status` are present
+#### Initial Sync (Section 5.3.1 in TDD)
 
-### ❌ Missing or Incomplete Features
+| Step | TDD Spec | Implementation | Status |
+|------|----------|----------------|--------|
+| 1 | Get start page token | `driveClient.getStartPageToken()` | **Compliant** |
+| 2 | List all files | `driveClient.listAllFiles()` with all fields | **Compliant** |
+| 3 | Insert files into DB | `fileOps.driveFileToRecord()` calls `db.upsertFile()` | **Compliant** |
+| 4 | Download breadth-first | Folders processed before files | **Partially Compliant** (see Issue 1.3.1) |
+| 5 | Save change token | `db.saveChangeToken()` | **Compliant** |
 
-#### 1. Breadth-First Traversal Issue
-**Location:** SyncEngineImpl.kt:362-379
+**Issue 1.3.1: Breadth-First Traversal Not Truly Hierarchical**
 
-**Current Implementation:**
-```kotlin
-// Current: Processes all folders, then all files
-val folders = pendingFiles.filter { it.isFolder }
-val files = pendingFiles.filter { !it.isFolder }
+The TDD specifies breadth-first traversal starting from root folders:
+```
+queue = GetRootFolders()
+WHILE queue NOT EMPTY:
+    item = queue.dequeue()
+    IF item.is_folder:
+        CreateLocalDirectory(item.local_path)
+        queue.enqueue(GetChildren(item.id))
 ```
 
-**Problem:** This doesn't guarantee parent folders are created before child folders. If "FolderA/FolderB" is returned before "FolderA" in the list, it could fail.
+However, the implementation in `downloadPendingFiles()` (`SyncEngineImpl.kt:428-512`) does:
+1. Get all pending files from DB
+2. Separate into folders and files
+3. Process **all folders** first (sequentially)
+4. Process **all files** concurrently
 
-**TDD Requirement** (Section 5.3.1): "breadth-first to create folders first" - should process by hierarchy level.
+This is **not true breadth-first traversal**. It processes all folders before any files, but doesn't ensure parent folders are created before child folders. If a nested folder structure like `/A/B/C/` exists and folder `C` is processed before folder `A`, the path resolution in `buildLocalPath()` would work correctly (because it traverses parent IDs), but this is relying on `Files.createDirectories()` to create the full path rather than properly ordering operations.
 
-**Impact:** High - Could cause sync failures for nested folder structures.
+**Risk:** Low (mitigated by `Files.createDirectories()`), but doesn't match spec.
 
----
+#### Incremental Sync (Section 5.3.2 in TDD)
 
-#### 2. Missing MD5 Verification
-**Location:** FileOperations.kt:132-170
+| Step | TDD Spec | Implementation | Status |
+|------|----------|----------------|--------|
+| 1 | Get saved change token | `db.getChangeToken()` | **Compliant** |
+| 2 | List changes since token | `driveClient.listChanges()` | **Compliant** |
+| 3 | Process removed files | Deletes if `config.deleteRemovedFiles` | **Compliant** |
+| 4 | Process new files | Inserts with PENDING status | **Compliant** |
+| 5 | Process modified files | Updates and sets PENDING | **Compliant** |
+| 6 | Download pending files | Calls `downloadPendingFiles()` | **Compliant** |
+| 7 | Save new change token | `db.saveChangeToken()` | **Compliant** |
 
-**TDD Requirement** (Section 5.4.1): "Verify MD5 checksum matches remote"
+**Issue 1.3.2: Trashed Files Not Handled**
 
-**Problem:** Downloads complete without checksum verification, risking corrupted files.
-
-**Impact:** Medium - Corrupted downloads won't be detected.
-
----
-
-#### 3. Partial Download Resumption Not Implemented
-**Location:** SyncEngineImpl.kt (missing implementation)
-
-**TDD Requirement** (Section 5.3.3): "Check for partial download... ResumeDownload(file, partial_path)"
-
-**Problem:** If a download is interrupted mid-file, it restarts from scratch rather than resuming.
-
-**Impact:** Medium - Wastes bandwidth and time on large file re-downloads.
-
----
-
-#### 4. Shortcuts Not Handled
-**Location:** FileOperations.kt (missing implementation)
-
-**TDD Requirement** (Section 5.4.3): "Creating a local symlink pointing to the target file's local path"
-
-**Problem:** The `GOOGLE_SHORTCUT_MIME_TYPE` constant is defined but never used.
-
-**Impact:** Low - Shortcuts will be ignored in sync.
-
----
-
-#### 5. Database Location Inconsistency
-**Location:** SyncEngineImpl.kt:31
-
-**Current Implementation:**
-```kotlin
-private val databasePath = config.downloadDirectory.parent / ".google-drive-downloader" / "state.db"
+The TDD spec says:
+```
+IF change.removed OR change.file.trashed:
+    MarkForDeletion(change.fileId)
 ```
 
-**TDD Requirement** (Section 5.2): `~/.google-drive-downloader/state.db`
+The implementation (`SyncEngineImpl.kt:201`) checks:
+```kotlin
+if (change.removed || change.file == null) {
+```
 
-**Problem:** If downloadDirectory is `/mnt/backup/drive`, database goes to `/mnt/backup/.google-drive-downloader/` instead of user's home directory.
+The `trashed` field is not explicitly checked. If a file is moved to trash but not fully deleted, it will have `removed=false` and `file` will still be present. The implementation relies on the Google Drive API returning `removed=true` for trashed files, which may not always be the case.
 
-**Impact:** Low - Functional but inconsistent with spec.
+#### Resume Sync (Section 5.3.3 in TDD)
+
+| Step | TDD Spec | Implementation | Status |
+|------|----------|----------------|--------|
+| 1 | Check for incomplete sync run | `db.getLastSyncRun()` | **Compliant** |
+| 2 | Get PENDING/DOWNLOADING files | `db.getFilesByStatuses()` | **Compliant** |
+| 3 | Resume partial downloads | Not implemented | **Non-Compliant** (see Issue 1.3.3) |
+| 4 | Fall back to incremental | Calls `incrementalSync()` | **Compliant** |
+
+**Issue 1.3.3: Partial Download Resume Not Implemented**
+
+The TDD spec says:
+```
+IF file.sync_status == 'downloading':
+    // Check for partial download
+    partial_path = GetPartialPath(file)
+    IF EXISTS(partial_path):
+        ResumeDownload(file, partial_path)
+```
+
+The implementation does **not** resume partial downloads. It simply re-downloads files that were in DOWNLOADING status. This is a missing feature.
+
+### 1.4 File Handling Compliance
+
+| Feature | TDD Spec | Implementation | Status |
+|---------|----------|----------------|--------|
+| Regular files | Download via `alt=media` | `driveClient.downloadFile()` | **Compliant** |
+| Workspace files | Export to configured format | `driveClient.exportFile()` | **Compliant** |
+| Temp file pattern | `filename.tmp` | `${localPath.name}.tmp` | **Compliant** |
+| Atomic rename | Rename after download | `Files.move()` with `ATOMIC_MOVE` | **Compliant** |
+| Filename sanitization | Replace `/`, null bytes, truncate | `sanitizeFilename()` | **Partially Compliant** (see Issue 1.4.1) |
+| Duplicate handling | Append ` (1)`, ` (2)` | `resolvePathConflict()` | **Implemented but Unused** (see Issue 1.4.2) |
+| Shortcuts | Create symlinks | Not implemented | **Non-Compliant** (see Issue 1.4.3) |
+
+**Issue 1.4.1: Filename Sanitization Incomplete**
+
+The implementation only handles:
+- Replace `/` with `_`
+- Replace null bytes with `_`
+- Truncate to 255 bytes
+
+Missing:
+- No handling of other problematic characters (`:`, `*`, `?`, `"`, `<`, `>`, `|` on some systems)
+- No handling of reserved names (e.g., `CON`, `PRN`, `AUX` on Windows, though Linux-only is noted)
+- Truncation doesn't account for multi-byte UTF-8 character boundaries cleanly (could produce invalid UTF-8)
+
+**Issue 1.4.2: `resolvePathConflict()` Never Called**
+
+The `resolvePathConflict()` function in `FileOperations.kt:105-137` exists to handle duplicate filenames by appending ` (1)`, ` (2)`, etc. However, this function is **never called** anywhere in the codebase. The actual download paths are built by `buildLocalPath()` and used directly without conflict checking.
+
+**Issue 1.4.3: Shortcuts Not Implemented**
+
+The TDD specifies:
+> Google Drive shortcuts are handled by:
+> 1. Detecting `application/vnd.google-apps.shortcut` MIME type
+> 2. Resolving the target file ID from `shortcutDetails.targetId`
+> 3. Creating a local symlink pointing to the target file's local path
+
+The `GOOGLE_SHORTCUT_MIME_TYPE` constant exists (`FileOperations.kt:27`) but is never used. Shortcuts are currently downloaded as empty files or cause errors.
+
+### 1.5 Database Schema Compliance
+
+| Table | TDD Schema | Implementation | Status |
+|-------|------------|----------------|--------|
+| `files` | All columns | All columns | **Compliant** |
+| `sync_runs` | All columns | All columns | **Compliant** |
+| `change_tokens` | All columns | All columns | **Compliant** |
+| Indexes | `idx_files_parent`, `idx_files_status` | Both created | **Compliant** |
+
+### 1.6 Configuration Compliance
+
+| Config Field | TDD Spec | Implementation | Status |
+|--------------|----------|----------------|--------|
+| `downloadDirectory` | Path for downloads | Used correctly | **Compliant** |
+| `exportFormats` | MIME type mappings | Used for Workspace export | **Compliant** |
+| `maxConcurrentDownloads` | Default 4 | Semaphore-controlled | **Compliant** |
+| `deleteRemovedFiles` | Default false | Checked in incremental sync | **Compliant** |
 
 ---
 
 ## 2. Test Coverage Analysis
 
-### ✅ Well-Covered Areas
-- Basic success paths for all sync operations
-- Error handling for API failures
-- Folder and Google Workspace file handling
-- Removed file handling (both delete modes)
-- Individual file failures don't stop sync
-- Status and failed files retrieval
+### 2.1 Current Test Coverage
 
-### ❌ Missing Test Coverage
+| Component | Test File | Coverage Level |
+|-----------|-----------|----------------|
+| `SyncEngineImpl` | `SyncEngineImplTest.kt` | **Good** |
+| `DatabaseManager` | None | **Missing** |
+| `FileOperations` | None | **Missing** |
 
-#### Critical Missing Tests:
+### 2.2 SyncEngineImplTest Coverage
 
-1. **Concurrent Download Limits**
-   - No test verifies `maxConcurrentDownloads` is respected
-   - Should test that only N downloads run simultaneously
+| Feature | Tests | Status |
+|---------|-------|--------|
+| `getSyncStatus` - empty | Yes | Good |
+| `getSyncStatus` - after sync | Yes | Good |
+| `getFailedFiles` - empty | Yes | Good |
+| `getFailedFiles` - with errors | Yes | Good |
+| `initialSync` - success | Yes | Good |
+| `initialSync` - folders | Yes | Good |
+| `initialSync` - Workspace files | Yes | Good |
+| `initialSync` - token failure | Yes | Good |
+| `initialSync` - list failure | Yes | Good |
+| `initialSync` - partial failures | Yes | Good |
+| `incrementalSync` - no token | Yes | Good |
+| `incrementalSync` - new files | Yes | Good |
+| `incrementalSync` - modified files | Yes | Good |
+| `incrementalSync` - removed (keep) | Yes | Good |
+| `incrementalSync` - removed (delete) | Yes | Good |
+| `incrementalSync` - empty changes | Yes | Good |
+| `incrementalSync` - API failure | Yes | Good |
+| `resumeSync` - no interruption | Yes | Good |
+| `resumeSync` - with interruption | Yes | **Weak** (see below) |
 
-2. **Database Consistency**
-   - No tests verify transactions prevent partial state on crashes
-   - Should test that failed syncs don't corrupt the database
+### 2.3 Missing Test Coverage
 
-3. **Nested Folder Hierarchies**
-   - No tests with 3+ level deep folders like `A/B/C/D/file.txt`
-   - Should verify parent folders are created before children
+#### 2.3.1 DatabaseManager Tests (Critical Gap)
 
-4. **Path Conflict Resolution**
-   - No tests for `FileOperations.resolvePathConflict()`
-   - Should test duplicate filename handling (`file (1).txt`, etc.)
+`DatabaseManager` has no dedicated tests. Should test:
+- Schema initialization
+- `createSyncRun()` and ID generation
+- `updateSyncRunProgress()` and `completeSyncRun()`
+- `getLastSyncRun()` edge cases
+- `upsertFile()` insert vs update behavior
+- `updateFileStatus()` with various states
+- `getFile()` for existing and non-existing files
+- `getFilesByStatus()` and `getFilesByStatuses()`
+- `getChildren()` with null and non-null parent
+- `deleteFile()` behavior
+- `getSyncStatistics()` aggregation
+- `saveChangeToken()` and `getChangeToken()`
+- Transaction behavior and error handling
+- Database connection lifecycle
 
-5. **Filename Sanitization Edge Cases**
-   - No tests for special characters (`/`, null bytes)
-   - No tests for 255-byte boundary truncation
-   - No tests for unicode handling
+#### 2.3.2 FileOperations Tests (Critical Gap)
 
-6. **MD5 Checksum Validation**
-   - No tests (feature not implemented)
+`FileOperations` has no dedicated tests. Should test:
+- `sanitizeFilename()` edge cases (UTF-8, special chars, long names)
+- `buildLocalPath()` with deep nesting
+- `buildLocalPath()` with Workspace files (extension appending)
+- `resolvePathConflict()` with varying collision counts
+- `downloadRegularFile()` success and failure paths
+- `exportWorkspaceFile()` with various MIME types
+- `createFolder()` behavior
+- `downloadFile()` routing logic
+- `driveFileToRecord()` conversion
 
-7. **Shortcut Handling**
-   - No tests (feature not implemented)
+#### 2.3.3 Weak Tests
 
-8. **Change Token Save Failure**
-   - What happens if saving the token fails after a successful sync?
-   - Should test that sync is marked as complete even if token save fails
+**`resumeSync - with interruption` test is weak:**
 
-9. **Progress Event Sequence**
-   - No verification that events arrive in correct order
-   - Should test that Started → DiscoveringFiles → FileQueued → ... → Completed
+The test (`SyncEngineImplTest.kt:671-747`) attempts to simulate an interrupted sync by throwing an exception during download. However:
+1. The exception rolls back the sync run creation
+2. The test then expects `resumeSync()` to find pending files, but they don't exist
+3. The test assertion says "filesProcessed is 0" which indicates the resume didn't actually resume anything
 
-10. **Export Format Not Configured**
-    - What happens for a Google Doc without configured export format?
-    - Should test graceful failure with clear error message
+The test should properly set up the database state to have a sync run with status "running" or "interrupted" and files in PENDING/DOWNLOADING state.
 
-11. **Large File Lists**
-    - No tests with 100+ files to verify performance
-    - Should test pagination and memory usage
+### 2.4 Integration Test Gaps
 
-12. **Bytes Downloaded Accuracy**
-    - No verification that `bytesDownloaded` in Completed event is accurate
-    - Should test that it sums up all file sizes correctly
-
-#### Test Quality Issues:
-
-**resumeSync test has a bug** (SyncEngineImplTest.kt:608-678):
-
-```kotlin
-try {
-    syncEngine.initialSync().toList()
-} catch (e: Exception) {
-    // Expected
-}
-```
-
-**Problem:** The exception causes database rollback (no transaction explicitly started), so no interrupted sync is actually recorded. The test then falls back to incremental sync rather than testing resume. The comment on line 672 acknowledges this:
-
-```kotlin
-// resumeSync falls back to incremental sync when no interrupted sync is found
-// (the sync run wasn't persisted due to the exception rollback)
-```
-
-**Fix Needed:** Properly simulate an interrupted sync by:
-1. Marking sync_run as "running" before throwing exception
-2. Using a separate transaction that commits
-3. Or manually inserting an interrupted sync run
+No integration tests exist for:
+- Full sync with real filesystem operations
+- Concurrent download behavior with semaphore
+- Database persistence across multiple sync runs
+- Large file handling
+- Network failure recovery
 
 ---
 
-## 3. Code Style and Idiomaticity
+## 3. Maintainability Analysis
 
-### ✅ Good Practices
-- Proper use of Kotlin coroutines and Flow
-- Separation of concerns (DatabaseManager, FileOperations, SyncEngineImpl)
-- `Result<T>` for error handling
-- Sealed classes for type-safe events
-- AutoCloseable for resource management
-- Consistent naming and documentation
-- Good logging with kotlin-logging
-- Private visibility for internal classes
+### 3.1 Code Organization
 
-### ❌ Issues Requiring Attention
+**Strengths:**
+- Clear separation between interface (`SyncEngine.kt`) and implementation
+- Database operations isolated in `DatabaseManager`
+- File operations isolated in `FileOperations`
+- Use of Kotlin `Result<T>` for error handling
+- Good use of Kotlin coroutines and Flow
 
-#### 1. runBlocking Anti-Pattern
-**Location:** SyncEngineImpl.kt:391
-**Severity:** High
+**Weaknesses:**
 
+#### 3.1.1 SyncEngineImpl is Too Large
+
+`SyncEngineImpl.kt` is 514 lines and handles:
+- Initial sync orchestration
+- Incremental sync orchestration
+- Resume sync orchestration
+- Status queries
+- Failed file queries
+- Concurrent download coordination
+
+Consider extracting:
+- Download orchestration into a separate `DownloadCoordinator` class
+- Sync run management into a separate class
+
+#### 3.1.2 Duplicated Code in Sync Methods
+
+The three sync methods (`initialSync()`, `incrementalSync()`, `resumeSync()`) share similar patterns:
+- Create `DatabaseManager` and `FileOperations`
+- Create sync run
+- Download pending files
+- Complete sync run
+- Handle exceptions
+
+This could be extracted into a common template method or helper.
+
+#### 3.1.3 FileRecord.SyncStatus Type Mismatch
+
+In `SyncEngine.kt:98-118`, the `FileRecord` class has:
 ```kotlin
-var lastBytes = 0L
+data class FileRecord(
+    ...
+    val syncStatus: SyncStatus,  // References outer SyncStatus class!
+    ...
+) {
+    enum class SyncStatus {  // Different from the SyncStatus data class
+        PENDING, DOWNLOADING, COMPLETE, ERROR
+    }
+}
+```
+
+There are two types named `SyncStatus`:
+1. `dev.dking.googledrivedownloader.sync.SyncStatus` - the data class for sync status snapshot
+2. `dev.dking.googledrivedownloader.sync.FileRecord.SyncStatus` - the enum for file sync status
+
+The `FileRecord.syncStatus` field's type annotation `SyncStatus` is ambiguous and actually refers to the **outer** `SyncStatus` data class, not the inner enum. This appears to be a bug - the field should probably be typed as `FileRecord.SyncStatus`.
+
+Looking at `DatabaseManager.kt:407-420`, the `mapFileRecord()` function correctly uses:
+```kotlin
+syncStatus = FileRecord.SyncStatus.valueOf(rs.getString("sync_status").uppercase())
+```
+
+So the database layer uses the enum, but the data class type annotation is wrong.
+
+#### 3.1.4 runBlocking Anti-Pattern
+
+In `SyncEngineImpl.kt:480-484`:
+```kotlin
 val result = fileOps.downloadFile(file) { bytes, total ->
-    runBlocking {  // ❌ Anti-pattern!
+    runBlocking {
         onProgress(file.id, file.name, bytes, total)
     }
     lastBytes = bytes
 }
 ```
 
-**Problem:** Using `runBlocking` inside a coroutine blocks the thread, defeating the purpose of coroutines. This can cause deadlocks and poor performance.
+Using `runBlocking` inside a coroutine blocks the thread, defeating the purpose of coroutines. This can cause deadlocks and poor performance.
 
-**Fix:** Make the progress callback a suspend function:
+### 3.2 Error Handling
+
+**Strengths:**
+- Consistent use of `Result<T>` in return types
+- Errors logged before being returned
+- Individual file failures don't stop the sync
+
+**Weaknesses:**
+
+#### 3.2.1 Exception Swallowing in Flows
+
+In sync methods, exceptions are caught and converted to `SyncEvent.Failed`:
 ```kotlin
-suspend fun downloadFile(
-    file: FileRecord,
-    onProgress: suspend (bytesDownloaded: Long, totalBytes: Long?) -> Unit
-): Result<Unit>
-```
-
----
-
-#### 2. Database Thread Safety
-**Location:** DatabaseManager.kt:14-16
-**Severity:** High
-
-```kotlin
-private val connection: Connection = DriverManager.getConnection("jdbc:sqlite:$databasePath")
-```
-
-**Problem:** SQLite JDBC Connection is not thread-safe. With concurrent downloads (lines 382-413 in SyncEngineImpl), multiple coroutines might access the database simultaneously, leading to:
-- `SQLException: database is locked`
-- Data corruption
-- Inconsistent state
-
-**Fix:** Options:
-1. Synchronize all database access with a mutex
-2. Use a connection pool with single connection
-3. Use a coroutine dispatcher with single thread for DB operations
-
-```kotlin
-private val dbDispatcher = Dispatchers.IO.limitedParallelism(1)
-
-suspend fun updateFileStatus(...) = withContext(dbDispatcher) {
-    // database operations
-}
-```
-
----
-
-#### 3. Magic Strings Should Be Constants
-**Location:** DatabaseManager.kt:82, 121, 131
-**Severity:** Medium
-
-```kotlin
-VALUES (?, 'running', ?)  // Line 82
-stmt.setString(2, status)  // Line 131 - status is "running", "completed", "failed"
-stmt.setString(1, status.name.lowercase())  // Line 206 - "pending", "downloading", etc.
-```
-
-**Fix:** Define constants or enums:
-```kotlin
-object SyncRunStatus {
-    const val RUNNING = "running"
-    const val COMPLETED = "completed"
-    const val FAILED = "failed"
-    const val INTERRUPTED = "interrupted"
-}
-```
-
----
-
-#### 4. Side Effects in Conversion Method
-**Location:** FileOperations.kt:261
-**Severity:** Medium
-
-```kotlin
-fun driveFileToRecord(driveFile: DriveFile): FileRecord {
-    // Build local path
-    val localPath = buildLocalPath(...)
-
-    // ❌ Unexpected side effect - writes to database!
-    databaseManager.upsertFile(...)
-
-    return FileRecord(...)
-}
-```
-
-**Problem:** Method name suggests simple conversion, but it writes to database. This violates the principle of least surprise.
-
-**Fix:** Either:
-1. Rename to `insertDriveFile()` or `saveDriveFile()`
-2. Separate concerns: return FileRecord, let caller insert to DB
-
----
-
-#### 5. No Transaction Management
-**Location:** Throughout DatabaseManager
-**Severity:** High
-
-**Problem:** Multi-step database operations aren't wrapped in transactions. If a sync crashes between:
-- Updating file status and completing the sync run
-- Inserting multiple files
-- Updating progress and saving change token
-
-The database ends up in an inconsistent state.
-
-**Fix:** Wrap related operations in transactions:
-```kotlin
-fun <T> transaction(block: () -> T): T {
-    connection.autoCommit = false
-    return try {
-        val result = block()
-        connection.commit()
-        result
-    } catch (e: Exception) {
-        connection.rollback()
-        throw e
-    } finally {
-        connection.autoCommit = true
-    }
-}
-
-// Usage:
-db.transaction {
-    db.updateSyncRunProgress(syncRunId, filesProcessed, bytesDownloaded)
-    db.completeSyncRun(syncRunId, Instant.now(), "completed")
-    db.saveChangeToken(newToken, Instant.now())
-}
-```
-
----
-
-#### 6. Inconsistent Size Tracking
-**Location:** SyncEngineImpl.kt:399
-**Severity:** Low
-
-```kotlin
-onCompleted(file.id, file.name, file.size ?: lastBytes)
-```
-
-**Problem:** Fallback to `lastBytes` might not reflect actual bytes downloaded:
-- Google Workspace exports don't report size beforehand
-- `lastBytes` only tracks the last progress callback value
-- For folders, size is always 0 but this uses file.size
-
-**Fix:** Track actual bytes written to disk:
-```kotlin
-val actualSize = if (file.isFolder) 0L else localPath.fileSize()
-onCompleted(file.id, file.name, actualSize)
-```
-
----
-
-#### 7. Code Duplication
-**Location:** SyncEngineImpl.kt (all three sync methods)
-**Severity:** Medium
-
-**Problem:** The three sync methods share similar structure:
-```kotlin
-// All three methods have:
-val startTime = Instant.now()
-var filesProcessed = 0
-var bytesDownloaded = 0L
-var failedFiles = 0
-
-try {
-    DatabaseManager(databasePath).use { db ->
-        val fileOps = FileOperations(...)
-        val syncRunId = db.createSyncRun(...)
-        send(SyncEvent.Started(...))
-
-        // ... specific logic ...
-
-        val duration = Duration.between(startTime, Instant.now())
-        db.updateSyncRunProgress(...)
-        db.completeSyncRun(...)
-        send(SyncEvent.Completed(...))
-    }
 } catch (e: Exception) {
-    logger.error(e) { "... sync failed" }
-    send(SyncEvent.Failed("... sync failed: ${e.message}"))
+    logger.error(e) { "Initial sync failed" }
+    send(SyncEvent.Failed("Initial sync failed: ${e.message}"))
 }
 ```
 
-**Fix:** Extract common pattern:
+The original exception's stack trace is logged but not available to callers. Consider including exception type in the error message.
+
+#### 3.2.2 Database Errors Not Atomic
+
+Database operations in `DatabaseManager` are not wrapped in transactions. If the application crashes between updating file status and updating sync run progress, the database can be left in an inconsistent state.
+
+#### 3.2.3 Database Thread Safety
+
+`DatabaseManager` uses a single `Connection` object that is not thread-safe. With concurrent downloads using `async` and a `Semaphore`, multiple coroutines might access the database simultaneously, leading to `SQLException: database is locked` or data corruption.
+
+### 3.3 Logging
+
+Good logging coverage with appropriate log levels. Could improve by adding:
+- Structured logging with file IDs
+- Progress percentages in debug logs
+- Timing information for performance analysis
+
+---
+
+## 4. Security Analysis
+
+### 4.1 Path Traversal Vulnerabilities
+
+**Issue 4.1.1: No Path Validation in FileOperations**
+
+The `FileOperations` class doesn't validate that constructed paths stay within the download directory. A malicious file name from Google Drive could potentially escape the download directory.
+
+In `downloadRegularFile()` (`FileOperations.kt:142-187`):
 ```kotlin
-private suspend fun <T> runSyncOperation(
-    name: String,
-    operation: suspend (SyncContext) -> Unit
-): Flow<SyncEvent> = channelFlow {
-    // Common setup, error handling, completion logic
+val localPath = downloadDirectory.resolve(
+    file.localPath ?: return Result.failure(...)
+)
+```
+
+If `file.localPath` contains `../../../etc/passwd`, the path would escape the download directory. While `sanitizeFilename()` replaces `/` with `_`, the `localPath` is built from multiple parent folder names joined with `/` (`FileOperations.kt:99`):
+```kotlin
+return pathParts.joinToString("/")
+```
+
+A malicious folder named `..` could potentially be used for path traversal.
+
+**Recommendation:** Add path validation similar to `GoogleDriveClientImpl.validateOutputPath()`:
+```kotlin
+private fun validateOutputPath(outputPath: Path) {
+    val normalizedOutput = outputPath.normalize().toAbsolutePath()
+    val normalizedBase = downloadDirectory.normalize().toAbsolutePath()
+    require(normalizedOutput.startsWith(normalizedBase)) {
+        "Output path escapes download directory"
+    }
 }
 ```
 
----
+### 4.2 Symlink Attacks
 
-#### 8. Error Message Loses Context
-**Location:** SyncEngineImpl.kt:52, 78, etc.
-**Severity:** Low
+**Issue 4.2.1: No Symlink Validation**
 
-```kotlin
-send(SyncEvent.Failed("Failed to get start page token: ${tokenResult.exceptionOrNull()?.message}"))
-```
+Unlike `GoogleDriveClientImpl`, the `FileOperations` class doesn't check for symlinks in paths. An attacker who can create symlinks in the download directory could redirect file writes.
 
-**Problem:** Only includes the message, loses the exception type and stack trace that might be useful for debugging.
+**Recommendation:** Add symlink validation similar to `GoogleDriveClientImpl.validateNoSymlinks()`.
 
-**Fix:** Consider logging the full exception:
-```kotlin
-val exception = tokenResult.exceptionOrNull()
-logger.error(exception) { "Failed to get start page token" }
-send(SyncEvent.Failed("Failed to get start page token: ${exception?.message}"))
-```
+### 4.3 Temp File Security
 
----
+**Issue 4.3.1: Predictable Temp File Names**
 
-#### 9. No Cleanup of Temp Files
-**Location:** FileOperations.kt:146, 191
-**Severity:** Low
-
+In `FileOperations.kt:158`:
 ```kotlin
 val tempPath = localPath.resolveSibling("${localPath.name}.tmp")
 ```
 
-**Problem:** If the process crashes or is killed, `.tmp` files remain on disk forever.
+Temp file names are predictable (`filename.tmp`). This could allow an attacker to pre-create a symlink at the temp path location.
 
-**Fix:** On startup, clean up any `.tmp` files in the download directory:
+**Note:** `GoogleDriveClientImpl` was already fixed to use UUID-based temp file names. The same fix should be applied here, or the temp file creation should be delegated to `GoogleDriveClientImpl`.
+
+### 4.4 Database Security
+
+**Issue 4.4.1: Database Path Hardcoded**
+
+The database path is constructed from the download directory:
 ```kotlin
-fun cleanupTempFiles() {
-    Files.walk(downloadDirectory)
-        .filter { it.name.endsWith(".tmp") }
-        .forEach { Files.deleteIfExists(it) }
-}
+private val databasePath = config.downloadDirectory.parent / ".google-drive-downloader" / "state.db"
 ```
 
----
+This assumes the parent directory of `downloadDirectory` exists and is writable. If `downloadDirectory` is the filesystem root, this would fail or create files in unexpected locations.
 
-#### 10. Semaphore Release in Finally
-**Location:** SyncEngineImpl.kt:376-378, 405-407
-**Severity:** Low (already correct, just noting)
+### 4.5 SQL Injection
 
-✅ **Good practice:** Semaphore is correctly released in `finally` block to prevent leaks.
+**Status: Not Vulnerable**
 
----
-
-## Summary & Recommendations
-
-### Overall Assessment
-
-| Category | Score | Status |
-|----------|-------|--------|
-| **Functionality** | 85% | Good with gaps |
-| **Test Coverage** | 70% | Adequate but incomplete |
-| **Code Quality** | 80% | Good with fixable issues |
-
-### Functionality: 85% Complete
-
-**Strengths:**
-- Core algorithms correctly implemented
-- Proper event emission and Flow usage
-- Database schema matches specification
-- Error handling for most scenarios
-
-**Gaps:**
-- MD5 verification missing
-- Partial download resumption missing
-- Shortcut handling missing
-- Breadth-first traversal incomplete
-- Database location inconsistent with spec
-
-### Test Coverage: 70% Adequate
-
-**Strengths:**
-- Good coverage of happy paths
-- Tests for error scenarios
-- Tests for different file types
-- Tests for configuration options
-
-**Gaps:**
-- No concurrency testing
-- No edge case testing (deep nesting, special chars)
-- No database consistency testing
-- Missing tests for unimplemented features
-- Resume test doesn't actually test resume
-
-### Code Quality: 80% Good
-
-**Strengths:**
-- Well-structured and organized
-- Idiomatic Kotlin
-- Good separation of concerns
-- Proper use of coroutines (mostly)
-- Good documentation
-
-**Issues:**
-- `runBlocking` anti-pattern (HIGH priority)
-- Database thread safety (HIGH priority)
-- No transaction management (HIGH priority)
-- Method with hidden side effects
-- Code duplication across sync methods
-- Magic strings instead of constants
+All database queries use parameterized prepared statements. No SQL injection risk.
 
 ---
 
-## Prioritized Action Items
+## 5. Summary of Issues
 
-### P0 - Critical (Must Fix)
+### Critical Issues
 
-1. **Fix Database Thread Safety**
-   - Add mutex or single-threaded dispatcher for DB access
-   - Risk: Data corruption, crashes
+1. **Missing test coverage for DatabaseManager and FileOperations** - Two core components have no dedicated unit tests.
 
-2. **Remove runBlocking Anti-Pattern**
-   - Make progress callback suspend function
-   - Risk: Deadlocks, poor performance
+2. **Path traversal vulnerability** - FileOperations doesn't validate paths stay within download directory.
 
-3. **Add Transaction Management**
-   - Wrap multi-step operations in transactions
-   - Risk: Inconsistent database state
+3. **FileRecord.SyncStatus type annotation bug** - Field typed as wrong `SyncStatus` class.
 
-### P1 - High (Should Fix)
+4. **Database thread safety** - Single Connection used concurrently by multiple coroutines.
 
-4. **Implement Proper Breadth-First Traversal**
-   - Process folders by hierarchy level
-   - Risk: Sync failures for nested folders
+### High Priority Issues
 
-5. **Fix resumeSync Test**
-   - Properly simulate interrupted sync
-   - Current test doesn't validate resume functionality
+5. **Symlink attack vulnerability** - No symlink validation in FileOperations.
 
-6. **Add MD5 Verification**
-   - Verify checksums after download
-   - Risk: Corrupted files not detected
+6. **Predictable temp file names** - Could enable symlink attacks.
 
-### P2 - Medium (Nice to Have)
+7. **runBlocking anti-pattern** - Blocks threads, defeats coroutines.
 
-7. **Implement Partial Download Resumption**
-   - Check for and resume `.tmp` files
-   - Benefit: Saves bandwidth on large files
+8. **Partial download resume not implemented** - TDD-specified feature missing.
 
-8. **Add Concurrency Tests**
-   - Verify download limits respected
-   - Ensures performance requirements met
+9. **Shortcut handling not implemented** - TDD-specified feature missing.
 
-9. **Refactor to Reduce Duplication**
-   - Extract common sync operation pattern
-   - Improves maintainability
+### Medium Priority Issues
 
-10. **Add Missing Test Coverage**
-    - Nested folders, special characters, edge cases
-    - Increases confidence in implementation
+10. **Trashed files not explicitly handled** - Relies on API behavior.
 
-### P3 - Low (Polish)
+11. **Database operations not transactional** - Crash could leave inconsistent state.
 
-11. **Replace Magic Strings with Constants**
-    - Define enums/constants for status values
-    - Improves type safety
+12. **`resolvePathConflict()` never called** - Dead code, duplicate handling not working.
 
-12. **Fix Database Location**
-    - Use `~/.google-drive-downloader/` as specified
-    - Consistency with TDD
+13. **Weak resume sync test** - Doesn't properly test resumption.
 
-13. **Implement Shortcut Handling**
-    - Create symlinks for shortcuts
-    - Complete feature from TDD
+### Low Priority Issues
 
-14. **Add Temp File Cleanup**
-    - Clean up `.tmp` files on startup
-    - Better disk space management
+14. **Breadth-first traversal not truly hierarchical** - Works but doesn't match spec.
+
+15. **Filename sanitization incomplete** - Missing some edge cases.
+
+16. **SyncEngineImpl too large** - Could benefit from refactoring.
+
+17. **Duplicated code in sync methods** - Opportunities for DRY.
 
 ---
 
-## Conclusion
+## 6. Recommendations
 
-The SyncEngine implementation is **solid and functional** for the core use cases. The algorithms follow the TDD specifications closely, and the architecture is well-designed with good separation of concerns.
+### Immediate Actions
 
-However, there are **three critical issues** that should be addressed before production use:
-1. Database thread safety
-2. `runBlocking` anti-pattern
-3. Transaction management
+1. Add path traversal validation to `FileOperations`
+2. Add symlink validation to `FileOperations`
+3. Use UUID-based temp file names in `FileOperations`
+4. Fix `FileRecord.syncStatus` type annotation
+5. Fix database thread safety (use mutex or single-threaded dispatcher)
+6. Create `DatabaseManagerTest` with comprehensive coverage
+7. Create `FileOperationsTest` with comprehensive coverage
 
-Additionally, several TDD features are not implemented (MD5 verification, partial resumption, shortcuts), and test coverage could be improved, particularly for edge cases and concurrency.
+### Short-Term Actions
 
-With the P0 and P1 fixes applied, this implementation would be production-ready for most use cases.
+8. Implement shortcut handling
+9. Implement partial download resume
+10. Wrap database operations in transactions
+11. Call `resolvePathConflict()` or remove it
+12. Fix the weak resume sync test
+13. Fix `runBlocking` anti-pattern
+
+### Long-Term Actions
+
+14. Refactor `SyncEngineImpl` into smaller classes
+15. Extract common sync patterns into template methods
+16. Add integration tests
+17. Implement true breadth-first traversal
+18. Improve filename sanitization
