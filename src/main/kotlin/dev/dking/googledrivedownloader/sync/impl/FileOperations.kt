@@ -303,17 +303,28 @@ internal class FileOperations(
   }
 
   /**
-   * Download a file based on its type (regular, workspace, or folder).
+   * Skip a shortcut file - shortcuts are navigation aids and don't have downloadable content.
+   */
+  fun skipShortcut(file: FileRecord): Result<Unit> {
+    logger.debug { "Skipping shortcut ${file.name} (target: shortcut handling not implemented)" }
+    return Result.success(Unit)
+  }
+
+  /**
+   * Download a file based on its type (regular, workspace, shortcut, or folder).
    */
   suspend fun downloadFile(
     file: FileRecord,
     onProgress: (bytesDownloaded: Long, totalBytes: Long?) -> Unit,
   ): Result<Unit> {
+    val isShortcut = file.mimeType == GOOGLE_SHORTCUT_MIME_TYPE
     val isWorkspaceFile =
       file.mimeType.startsWith(GOOGLE_WORKSPACE_PREFIX) &&
-        file.mimeType != GOOGLE_FOLDER_MIME_TYPE
+        file.mimeType != GOOGLE_FOLDER_MIME_TYPE &&
+        !isShortcut
     return when {
       file.isFolder -> createFolder(file)
+      isShortcut -> skipShortcut(file)
       isWorkspaceFile -> exportWorkspaceFile(file, onProgress)
       else -> downloadRegularFile(file, onProgress)
     }

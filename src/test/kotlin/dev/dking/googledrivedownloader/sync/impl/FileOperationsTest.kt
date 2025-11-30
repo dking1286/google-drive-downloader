@@ -380,6 +380,23 @@ class FileOperationsTest {
     }
 
   @Test
+  fun `downloadFile routes shortcut to skipShortcut`() =
+    runTest {
+      val record =
+        createFileRecord(
+          "shortcut1",
+          "My Shortcut",
+          mimeType = "application/vnd.google-apps.shortcut",
+        )
+
+      val result = fileOps.downloadFile(record) { _, _ -> }
+
+      assertTrue(result.isSuccess)
+      // Verify no file was created (shortcuts are skipped)
+      assertFalse(Files.exists(downloadDir.resolve("My Shortcut")))
+    }
+
+  @Test
   fun `downloadFile routes workspace file to exportWorkspaceFile`() =
     runTest {
       val record =
