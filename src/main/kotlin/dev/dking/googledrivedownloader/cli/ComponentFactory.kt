@@ -60,8 +60,17 @@ class ComponentFactory(
 
   /**
    * Create a progress reporter.
+   *
+   * @param verbose Whether to show verbose output
+   * @param quiet Whether to suppress non-error output
    */
-  fun createProgressReporter(): ProgressReporter {
-    return ProgressReporter()
+  fun createProgressReporter(
+    verbose: Boolean = false,
+    quiet: Boolean = false,
+  ): ProgressReporter {
+    return ProgressReporter(
+      verbose = verbose,
+      quiet = quiet,
+    )
   }
 }

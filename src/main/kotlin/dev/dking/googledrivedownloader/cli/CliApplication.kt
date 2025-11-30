@@ -59,7 +59,11 @@ object CliApplication {
 
     // Create component factory
     val factory = ComponentFactory(appConfig)
-    val reporter = factory.createProgressReporter()
+    val reporter =
+      factory.createProgressReporter(
+        verbose = parseResult.verbose,
+        quiet = parseResult.quiet,
+      )
 
     // Execute the command
     return try {
