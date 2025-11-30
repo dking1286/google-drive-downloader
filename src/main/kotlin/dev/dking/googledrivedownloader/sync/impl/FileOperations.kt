@@ -2,6 +2,7 @@ package dev.dking.googledrivedownloader.sync.impl
 
 import dev.dking.googledrivedownloader.api.DriveFile
 import dev.dking.googledrivedownloader.api.GoogleDriveClient
+import dev.dking.googledrivedownloader.files.PathValidator
 import dev.dking.googledrivedownloader.sync.FileRecord
 import io.github.oshai.kotlinlogging.KotlinLogging
 import java.nio.file.Files
@@ -151,6 +152,11 @@ internal class FileOperations(
           ),
         )
 
+      // Validate path for security (path traversal and symlink attacks)
+      PathValidator.validatePath(localPath, downloadDirectory).onFailure {
+        return Result.failure(it)
+      }
+
       // Create parent directories
       Files.createDirectories(localPath.parent)
 
@@ -207,6 +213,11 @@ internal class FileOperations(
           ),
         )
 
+      // Validate path for security (path traversal and symlink attacks)
+      PathValidator.validatePath(localPath, downloadDirectory).onFailure {
+        return Result.failure(it)
+      }
+
       // Create parent directories
       Files.createDirectories(localPath.parent)
 
@@ -259,6 +270,11 @@ internal class FileOperations(
             IllegalStateException("Folder ${file.id} has no local path"),
           ),
         )
+
+      // Validate path for security (path traversal and symlink attacks)
+      PathValidator.validatePath(localPath, downloadDirectory).onFailure {
+        return Result.failure(it)
+      }
 
       Files.createDirectories(localPath)
       logger.debug { "Created folder ${file.name} at $localPath" }
