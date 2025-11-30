@@ -7,8 +7,11 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.StandardCopyOption
 import java.nio.file.attribute.PosixFilePermission
+import java.nio.file.attribute.PosixFilePermissions
 import java.time.Instant
+import java.util.UUID
 
 private val logger = KotlinLogging.logger {}
 
@@ -45,6 +48,8 @@ class TokenManager(
   /**
    * Save OAuth tokens from a Google Credential object to persistent storage.
    * Creates parent directories if needed and sets secure file permissions (600).
+   * Uses atomic write with secure temp file to prevent race conditions where
+   * tokens could briefly be world-readable.
    *
    * @param credential The Google API credential containing tokens
    */
@@ -67,12 +72,35 @@ class TokenManager(
           scope = "https://www.googleapis.com/auth/drive.readonly",
         )
 
-      // Serialize and write to file
+      // Serialize token data
       val jsonString = json.encodeToString(tokens)
-      Files.writeString(tokenPath, jsonString)
 
-      // Set secure file permissions (owner read/write only)
-      setFilePermissions(tokenPath)
+      // Create temp file with secure permissions from the start
+      val tempPath = tokenPath.parent.resolve(".${UUID.randomUUID()}.tokens.tmp")
+      try {
+        // Create temp file with secure permissions (600) atomically
+        val securePermissions =
+          PosixFilePermissions.asFileAttribute(
+            setOf(
+              PosixFilePermission.OWNER_READ,
+              PosixFilePermission.OWNER_WRITE,
+            ),
+          )
+        Files.createFile(tempPath, securePermissions)
+        Files.writeString(tempPath, jsonString)
+      } catch (e: UnsupportedOperationException) {
+        // Non-POSIX system (Windows) - create file normally
+        Files.writeString(tempPath, jsonString)
+        logger.warn { "Unable to set POSIX permissions on this platform" }
+      }
+
+      // Atomic move to final location
+      Files.move(
+        tempPath,
+        tokenPath,
+        StandardCopyOption.ATOMIC_MOVE,
+        StandardCopyOption.REPLACE_EXISTING,
+      )
 
       logger.info { "Tokens saved to $tokenPath" }
     } catch (e: Exception) {
@@ -142,29 +170,6 @@ class TokenManager(
       }
     } catch (e: Exception) {
       logger.warn(e) { "Failed to clear tokens" }
-    }
-  }
-
-  /**
-   * Set secure file permissions (600 - owner read/write only).
-   * Gracefully handles non-POSIX systems (e.g., Windows).
-   *
-   * @param path The file path to set permissions on
-   */
-  private fun setFilePermissions(path: Path) {
-    try {
-      val permissions =
-        setOf(
-          PosixFilePermission.OWNER_READ,
-          PosixFilePermission.OWNER_WRITE,
-        )
-      Files.setPosixFilePermissions(path, permissions)
-      logger.debug { "Set file permissions to 600 on $path" }
-    } catch (e: UnsupportedOperationException) {
-      // Windows or other non-POSIX systems
-      logger.warn { "Unable to set POSIX permissions on this platform" }
-    } catch (e: Exception) {
-      logger.warn(e) { "Failed to set file permissions" }
     }
   }
 }
