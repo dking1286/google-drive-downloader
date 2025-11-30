@@ -633,6 +633,73 @@ class FileOperationsTest {
       assertIs<PathValidationException>(result.exceptionOrNull())
     }
 
+  // ======================== Path Conflict Resolution Tests ========================
+
+  @Test
+  fun `downloadRegularFile resolves conflict when file already exists`() =
+    runTest {
+      // Create an existing file
+      val existingFile = downloadDir.resolve("test.txt")
+      Files.writeString(existingFile, "existing content")
+
+      val record = createFileRecord("file1", "test.txt", mimeType = "text/plain")
+
+      coEvery { driveClient.downloadFile("file1", any(), any()) } coAnswers {
+        val outputPath = secondArg<Path>()
+        Files.createDirectories(outputPath.parent)
+        Files.writeString(outputPath, "new content")
+        Result.success(Unit)
+      }
+
+      val result = fileOps.downloadRegularFile(record) { _, _ -> }
+
+      assertTrue(result.isSuccess)
+      // Original file should still have original content
+      assertEquals("existing content", Files.readString(existingFile))
+      // New file should be created with (1) suffix
+      val conflictFile = downloadDir.resolve("test (1).txt")
+      assertTrue(Files.exists(conflictFile))
+      assertEquals("new content", Files.readString(conflictFile))
+    }
+
+  @Test
+  fun `exportWorkspaceFile resolves conflict when file already exists`() =
+    runTest {
+      // Create an existing file
+      val existingFile = downloadDir.resolve("Document.docx")
+      Files.writeString(existingFile, "existing content")
+
+      val record =
+        createFileRecord(
+          "doc1",
+          "Document.docx",
+          mimeType = "application/vnd.google-apps.document",
+        )
+
+      coEvery {
+        driveClient.exportFile(
+          "doc1",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+          any(),
+        )
+      } coAnswers {
+        val outputPath = thirdArg<Path>()
+        Files.createDirectories(outputPath.parent)
+        Files.writeString(outputPath, "exported content")
+        Result.success(Unit)
+      }
+
+      val result = fileOps.exportWorkspaceFile(record) { _, _ -> }
+
+      assertTrue(result.isSuccess)
+      // Original file should still have original content
+      assertEquals("existing content", Files.readString(existingFile))
+      // New file should be created with (1) suffix
+      val conflictFile = downloadDir.resolve("Document (1).docx")
+      assertTrue(Files.exists(conflictFile))
+      assertEquals("exported content", Files.readString(conflictFile))
+    }
+
   // ======================== Helper Methods ========================
 
   private fun createFileRecord(

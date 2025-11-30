@@ -177,15 +177,23 @@ internal class FileOperations(
         return result
       }
 
+      // Resolve path conflicts if file already exists from a different source
+      val finalPath = resolvePathConflict(localPath)
+      if (finalPath != localPath) {
+        logger.warn {
+          "Path conflict for ${file.name}: using $finalPath instead of $localPath"
+        }
+      }
+
       // Atomic rename to final name
       Files.move(
         tempPath,
-        localPath,
+        finalPath,
         StandardCopyOption.ATOMIC_MOVE,
         StandardCopyOption.REPLACE_EXISTING,
       )
 
-      logger.debug { "Downloaded file ${file.name} to $localPath" }
+      logger.debug { "Downloaded file ${file.name} to $finalPath" }
       return Result.success(Unit)
     } catch (e: Exception) {
       logger.error(e) { "Failed to download file ${file.name}" }
@@ -244,15 +252,23 @@ internal class FileOperations(
         onProgress(size, size)
       }
 
+      // Resolve path conflicts if file already exists from a different source
+      val finalPath = resolvePathConflict(localPath)
+      if (finalPath != localPath) {
+        logger.warn {
+          "Path conflict for ${file.name}: using $finalPath instead of $localPath"
+        }
+      }
+
       // Atomic rename to final name
       Files.move(
         tempPath,
-        localPath,
+        finalPath,
         StandardCopyOption.ATOMIC_MOVE,
         StandardCopyOption.REPLACE_EXISTING,
       )
 
-      logger.debug { "Exported file ${file.name} to $localPath" }
+      logger.debug { "Exported file ${file.name} to $finalPath" }
       return Result.success(Unit)
     } catch (e: Exception) {
       logger.error(e) { "Failed to export file ${file.name}" }
